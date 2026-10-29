@@ -19,6 +19,7 @@ const tokenStore = require("./tokenStore");
 const accountScopeBinding = require("./accountScopeBinding");
 const { registerProductHelpIpc, remoteHelpPolicyState } = require("./productHelp");
 const { createCloudApiRequestHandler } = require("./cloudApiRequest");
+const { registerTranscriptStudioWriteIpcHandlers } = require("./transcriptStudioAccess");
 const { MetaActivation } = require("./metaActivation");
 const { decodeLeaderboardPngDataUrl, leaderboardImageFilename } = require("./leaderboardImage");
 const { withPolicyRequestHeaders } = require("./policyRequestHeaders");
@@ -1637,6 +1638,19 @@ class IPCHandlers {
     // ({ signal, release }); the handler gets one signal for both.
     const runAudioJob = (event, purpose, { signal, release }, handler) =>
       this._audioFeaturePolicy.run(event, purpose, handler, { signal }).finally(release);
+    const resolveTranscriptCloudPermission = async (cloudId) => {
+      const response = await handleCloudApiRequest({
+        method: "GET",
+        path: `/api/notes/${encodeURIComponent(cloudId)}/access`,
+      });
+      if (!response.success) throw new Error("Unable to verify transcript edit permission");
+      return response.data?.my_permission;
+    };
+    registerTranscriptStudioWriteIpcHandlers(
+      ipcMain,
+      this.databaseManager,
+      resolveTranscriptCloudPermission
+    );
     ipcMain.handle("onboarding-set-window-mode", (_event, mode) =>
       this.windowManager.setOnboardingWindowMode(mode)
     );
@@ -2495,19 +2509,11 @@ class IPCHandlers {
     ipcMain.handle("transcript-studio-get-workspace", (_event, noteId) =>
       this.databaseManager.getTranscriptWorkspace(noteId)
     );
-    ipcMain.handle("transcript-studio-apply-revision", (_event, input) =>
-      this.databaseManager.applyTranscriptRevision(input)
-    );
     ipcMain.handle("transcript-studio-list-versions", (_event, noteId) =>
       this.databaseManager.listTranscriptVersions(noteId)
     );
     ipcMain.handle("transcript-studio-get-version", (_event, noteId, versionId) =>
       this.databaseManager.getTranscriptVersion(noteId, versionId)
-    );
-    ipcMain.handle(
-      "transcript-studio-restore-version",
-      (_event, noteId, versionId, expectedVersion) =>
-        this.databaseManager.restoreTranscriptVersion(noteId, versionId, expectedVersion)
     );
 
     ipcMain.handle("db-get-notes", async (event, noteType, limit, folderId, spaceId, spaceIds) => {

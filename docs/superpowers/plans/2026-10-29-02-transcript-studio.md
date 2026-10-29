@@ -131,11 +131,11 @@
 
 **Interfaces:** `listTranscriptVersions(noteId)` shows baseline, important manual checkpoints, pre-AI and approved bulk revisions; `restoreTranscriptVersion` creates a **new** revision and leaves all old snapshots intact.
 
-- [ ] **Step 1:** Write failing tests: close/reopen retains history; compare versions; restore old version creates new history entry; undo/redo resets only for new session; no cross-note history leakage.
-- [ ] **Step 2:** Run tests and observe failure.
-- [ ] **Step 3:** Build history view and diff/restore confirmation; ensure version snapshots are compressed/deduplicated or otherwise bounded for multi-hour transcripts; create checkpoint policy not per-keystroke snapshots.
-- [ ] **Step 4:** Run targeted tests plus temporary-SQLite reopening test.
-- [ ] **Step 5:** Commit `feat(transcript): add durable version history and restore`.
+- [x] **Step 1:** Write failing tests: close/reopen retains history; compare versions; restore old version creates new history entry; undo/redo resets only for new session; no cross-note history leakage.
+- [x] **Step 2:** Run tests and observe failure.
+- [x] **Step 3:** Build history view and diff/restore confirmation; ensure version snapshots are compressed/deduplicated or otherwise bounded for multi-hour transcripts; create checkpoint policy not per-keystroke snapshots.
+- [x] **Step 4:** Run targeted tests plus temporary-SQLite reopening test.
+- [x] **Step 5:** Commit `feat(transcript): add durable version history and restore`.
 
 ### Task 8: Explicit Original/Approved Resolver, Export and Regression
 

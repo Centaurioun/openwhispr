@@ -4296,6 +4296,32 @@ class DatabaseManager {
     return note;
   }
 
+  getTranscriptEditAuthority(noteId) {
+    const note = this._transcriptStudioAccessibleNote(noteId);
+    const space = note.space_id
+      ? this.db
+          .prepare("SELECT kind, my_role, capabilities FROM spaces WHERE id = ?")
+          .get(note.space_id)
+      : null;
+    if (space?.kind === "team") {
+      let capabilities = null;
+      try {
+        capabilities = space.capabilities ? JSON.parse(space.capabilities) : null;
+      } catch {
+        throw new Error("Unable to verify transcript edit permission");
+      }
+      const canEdit =
+        typeof capabilities?.edit_notes === "boolean"
+          ? capabilities.edit_notes
+          : space.my_role === "admin" || space.my_role === "member";
+      return { canEdit, cloudId: null };
+    }
+    if (note.cloud_id && note.owner_user_id !== this.activeAccountId) {
+      return { canEdit: false, cloudId: note.cloud_id };
+    }
+    return { canEdit: true, cloudId: null };
+  }
+
   _transcriptStudioScopeKey(note) {
     const space = note.space_id
       ? this.db.prepare("SELECT kind FROM spaces WHERE id = ?").get(note.space_id)

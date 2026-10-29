@@ -484,6 +484,13 @@ export function TranscriptStudioView({
       setCompareVersionId(versionId);
       try {
         const snapshot = await transcriptStudioRepository.getTranscriptVersion(noteId, versionId);
+        if (snapshot.sourceHash !== metadataRef.current.sourceHash) {
+          setCompareText("");
+          setError(
+            "This version belongs to a different source transcript; comparison is unavailable."
+          );
+          return;
+        }
         const source = await normalizeTranscriptSource(sourceTranscript);
         const compared = applyEditOperations(source, snapshot.operations as EditOperation[], {
           actor: "user",

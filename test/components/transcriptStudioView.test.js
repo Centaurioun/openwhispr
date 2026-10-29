@@ -351,6 +351,47 @@ test("version history compares read-only and asks before restoring", async (t) =
   assert.equal(restoreCalls, 0);
 });
 
+test("version comparison refuses a snapshot from a different raw transcript source", async (t) => {
+  const raw = "Current source words";
+  const normalized = await normalizeTranscriptSource(raw);
+  const workspace = {
+    noteId: 29,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 1,
+    versionId: "current-version",
+    approvedOperations: [],
+    stale: false,
+  };
+  const api = {
+    ...apiFor(workspace),
+    listTranscriptVersions: async () => [
+      { versionId: "old-source-version", version: 1, description: "Old transcript revision" },
+    ],
+    getTranscriptVersion: async () => ({
+      versionId: "old-source-version",
+      version: 1,
+      description: "Old transcript revision",
+      createdAt: null,
+      sourceHash: "previous-source-hash",
+      operations: [{ kind: "replaceText", segmentId: "source-old", after: "must not apply" }],
+    }),
+  };
+  const { host } = await mount(t, { noteId: 29, sourceTranscript: raw, canEdit: false }, api);
+  const history = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent.includes("Version history")
+  );
+  await React.act(async () => history.click());
+  assert.match(host.textContent, /different source transcript/);
+  assert.equal(host.querySelector("textarea").value, raw);
+  assert.equal(
+    host.querySelector("[aria-label='Read-only version comparison'] pre").textContent,
+    ""
+  );
+});
+
 test("restoring a selected revision creates a new session baseline with empty Undo and Redo", async (t) => {
   const raw = "Original line";
   const normalized = await normalizeTranscriptSource(raw);
@@ -411,6 +452,9 @@ test("restoring a selected revision creates a new session baseline with empty Un
     button.textContent.includes("Restore selected version")
   );
   await React.act(async () => restore.click());
+  const restoredToBaseline = await waitFor(() => host.querySelector("textarea").value === raw, 50);
+  await React.act(async () => {});
+  assert.ok(restoredToBaseline, "selected version restore did not finish before the assertion");
   assert.equal(host.querySelector("textarea").value, raw);
   assert.equal(
     [...host.querySelectorAll("button")].find((button) => button.textContent === "Undo").disabled,
