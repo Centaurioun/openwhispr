@@ -69,6 +69,7 @@ test('dirty custom/main blocks integration', async () => {
   const result = validateIntegrationState({ ...clean, currentBranch: 'custom/main', dirty: true, mergeBase: 'abc123' });
   assert.equal(result.ok, false);
   assert.match(result.reasons.join(' '), /uncommitted/i);
+  assert.match(result.reasons.join(' '), /custom\/main must be clean/i);
 });
 
 test('missing merge base fails closed', async () => {

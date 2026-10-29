@@ -23,3 +23,7 @@ The checker compares local `main` with the cached `refs/remotes/upstream/main`; 
 ## Commit
 
 `chore(fork): add isolation and conflict gates`
+
+## Focused review follow-up
+
+Updated the dirty `custom/main` checker test to assert both the general uncommitted-change rejection and the explicit `custom/main must be clean` reason. To verify that this branch-specific assertion detects a regression, temporarily removed that reason from the validator and ran `node --test --test-name-pattern='dirty custom/main blocks integration' test/helpers/customUpstreamGate.test.js` with Node 24. It failed as expected because the actual reasons contained only the generic uncommitted-change message. Restored the validator without retaining any temporary edits. The full targeted file then passed all 11 tests, and `git diff --check` passed.
