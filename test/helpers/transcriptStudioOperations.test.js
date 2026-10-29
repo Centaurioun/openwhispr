@@ -126,6 +126,20 @@ test("AI cannot change a locked speaker while a user can explicitly override it"
   });
 });
 
+test("AI cannot merge distinct confirmed speakers into an unnamed segment", () => {
+  const initial = workspace([
+    segment("a", "First", 0, { speakerId: "speaker-1", speakerName: "Ada" }),
+    segment("b", "Second", 1, { speakerId: "speaker-2", speakerName: "Lin" }),
+  ]);
+  const operation = [{ kind: "merge", leftId: "a", rightId: "b" }];
+
+  assert.throws(() => applyEditOperations(initial, operation, { actor: "ai" }), /speaker/i);
+  const userMerge = applyEditOperations(initial, operation, { actor: "user" });
+  assert.equal(userMerge.segments[0].text, "FirstSecond");
+  assert.equal(userMerge.segments[0].speakerId, null);
+  assert.equal(userMerge.segments[0].speakerName, null);
+});
+
 test("one accepted bulk edit is one undo unit and redo reapplies it", () => {
   const store = createTranscriptStudioStore(
     workspace([segment("a", "one", 0), segment("b", "two", 1)])

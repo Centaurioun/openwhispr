@@ -113,8 +113,17 @@ function applyOne(
       }
       const speakerMatches =
         left.speakerId === right.speakerId && left.speakerName === right.speakerName;
-      if (actor === "ai" && !speakerMatches && (left.speakerLocked || right.speakerLocked)) {
-        throw new Error("Transcript merge would change a locked speaker assignment");
+      const hasSpeakerAssignment =
+        left.speakerId !== null ||
+        left.speakerName !== null ||
+        right.speakerId !== null ||
+        right.speakerName !== null;
+      if (
+        actor === "ai" &&
+        !speakerMatches &&
+        (hasSpeakerAssignment || left.speakerLocked || right.speakerLocked)
+      ) {
+        throw new Error("Transcript merge would change or discard a speaker assignment");
       }
       const merged: SourceSegment = {
         ...left,
