@@ -17,6 +17,7 @@ import type { TranscriptStudioWorkspace } from "../../../types/electron";
 import { startTranscriptEditJob, type TranscriptEditEvent } from "../process/transcriptEditJob";
 import { getSettings } from "../../../stores/settingsStore";
 import { usePolicyStore } from "../../../stores/policyStore";
+import { ProposalReview, type PendingTranscriptProposal } from "./ProposalReview";
 
 interface TranscriptStudioViewProps {
   noteId: number;
@@ -105,9 +106,8 @@ export function TranscriptStudioView({
   const [error, setError] = useState("");
   const [jobMessage, setJobMessage] = useState("");
   const [jobProgress, setJobProgress] = useState("");
-  const [proposals, setProposals] = useState<
-    Array<Extract<TranscriptEditEvent, { type: "chunkProposed" }>>
-  >([]);
+  const [proposals, setProposals] = useState<PendingTranscriptProposal[]>([]);
+  const [currentVersion, setCurrentVersion] = useState(0);
   const [jobRunning, setJobRunning] = useState(false);
   const [resumeFromChunk, setResumeFromChunk] = useState(0);
   const jobControllerRef = useRef<AbortController | null>(null);
@@ -170,6 +170,7 @@ export function TranscriptStudioView({
             savedVersions.find((version) => version.version === saved.currentVersion)?.versionId ??
             ""),
       };
+      setCurrentVersion(metadataRef.current.currentVersion);
       versionForSnapshotRef.current = new Map([
         [operationSnapshot(initial), metadataRef.current.versionId],
       ]);
@@ -189,7 +190,7 @@ export function TranscriptStudioView({
 
   const persist = useCallback(
     (
-      operation: EditOperation,
+      operation: EditOperation | EditOperation[],
       resultingWorkspace: TranscriptEditWorkspace,
       description: string
     ) => {
@@ -199,7 +200,7 @@ export function TranscriptStudioView({
           noteId,
           expectedVersion: currentMetadata.currentVersion,
           sourceHash: currentMetadata.sourceHash,
-          operations: [operation],
+          operations: Array.isArray(operation) ? operation : [operation],
           description,
         });
         if ("conflict" in result) {
@@ -212,6 +213,7 @@ export function TranscriptStudioView({
           currentVersion: result.version,
           versionId: result.workspace.versionId ?? "",
         };
+        setCurrentVersion(result.version);
         versionForSnapshotRef.current.set(
           operationSnapshot(resultingWorkspace),
           result.workspace.versionId ?? ""
@@ -525,7 +527,16 @@ export function TranscriptStudioView({
               removeJobDraft();
               return previous;
             }
-            const next = [...previous.filter((item) => item.chunk.id !== event.chunk.id), event];
+            const next = [
+              ...previous.filter((item) => item.chunk.id !== event.chunk.id),
+              {
+                ...event,
+                baseVersion: metadataRef.current.currentVersion,
+                ...(event.validation.edits.some((edit) => edit.kind === "setSpeaker")
+                  ? { uncertain: true as const }
+                  : {}),
+              },
+            ];
             try {
               window.sessionStorage?.setItem(jobContext.storageKey, JSON.stringify(next));
             } catch {
@@ -559,6 +570,83 @@ export function TranscriptStudioView({
       }
     }
   }, [canEdit, jobRunning, jobRunner, loading, noteId, resumeFromChunk, selectedSegmentIds, stale]);
+
+  const acceptProposals = useCallback(
+    async (ids: string[], operations: EditOperation[]) => {
+      if (
+        !canEdit ||
+        stale ||
+        error ||
+        proposals.some(
+          (proposal) =>
+            ids.includes(proposal.chunk.id) &&
+            proposal.baseVersion !== metadataRef.current.currentVersion
+        )
+      )
+        return;
+      let applied = false;
+      try {
+        session.getState().apply(operations, { actor: "user" });
+        applied = true;
+        await persist(
+          operations,
+          session.getState().workspace,
+          ids.length > 1 ? "Accepted AI transcript proposals" : "Accepted AI transcript proposal"
+        );
+        setProposals((previous) => {
+          const next = previous.filter((proposal) => !ids.includes(proposal.chunk.id));
+          try {
+            window.sessionStorage?.setItem(
+              proposalContextRef.current.storageKey,
+              JSON.stringify(next)
+            );
+          } catch {
+            /* session-only */
+          }
+          return next;
+        });
+        setError("");
+      } catch (acceptError) {
+        if (applied) session.getState().undo();
+        setError(
+          acceptError instanceof Error ? acceptError.message : "AI proposal could not be accepted."
+        );
+      }
+    },
+    [canEdit, error, persist, proposals, session, stale]
+  );
+
+  const rejectProposals = useCallback((ids: string[]) => {
+    setProposals((previous) => {
+      const next = previous.filter((proposal) => !ids.includes(proposal.chunk.id));
+      try {
+        window.sessionStorage?.setItem(proposalContextRef.current.storageKey, JSON.stringify(next));
+      } catch {
+        /* session-only */
+      }
+      return next;
+    });
+  }, []);
+
+  const rereviewProposal = useCallback((id: string, edits: EditOperation[]) => {
+    setProposals((previous) => {
+      const next = previous.map((proposal) =>
+        proposal.chunk.id === id
+          ? {
+              ...proposal,
+              baseVersion: metadataRef.current.currentVersion,
+              validation: { ...proposal.validation, edits },
+            }
+          : proposal
+      );
+      try {
+        window.sessionStorage?.setItem(proposalContextRef.current.storageKey, JSON.stringify(next));
+      } catch {
+        /* session-only */
+      }
+      return next;
+    });
+  }, []);
 
   if (loading)
     return <div className="px-4 py-6 text-sm text-muted-foreground">Loading transcript…</div>;
@@ -631,42 +719,15 @@ export function TranscriptStudioView({
         </p>
       )}
       {proposals.length > 0 && (
-        <section
-          aria-label="Pending AI transcript proposals"
-          className="mb-4 rounded border border-border p-3"
-        >
-          <h3 className="font-medium">Pending AI proposals ({proposals.length})</h3>
-          <p className="text-xs text-muted-foreground">
-            Review and accept proposals in the proposal review step. Approved transcript text is
-            unchanged.
-          </p>
-          {proposals.map(({ chunk, candidate, validation }) => (
-            <article
-              key={chunk.id}
-              className="mt-2 border-t border-border/60 pt-2"
-              data-proposal-chunk={chunk.id}
-            >
-              <strong>Chunk {chunk.index + 1}</strong>
-              {validation.warnings.map((warning) => (
-                <p role="alert" key={warning}>
-                  {warning}
-                </p>
-              ))}
-              {validation.edits.map(
-                (edit) =>
-                  edit.kind === "replaceText" && (
-                    <p key={edit.segmentId} className="text-sm">
-                      <del>{edit.before}</del> → <ins>{edit.after}</ins>
-                    </p>
-                  )
-              )}
-              {!validation.edits.length && <p className="text-sm">No text changes proposed.</p>}
-              <span className="sr-only">
-                Candidate contains {candidate.segments.length} source blocks.
-              </span>
-            </article>
-          ))}
-        </section>
+        <ProposalReview
+          proposals={proposals}
+          workspace={workspace}
+          currentVersion={currentVersion}
+          canEdit={canEdit && !stale && !error}
+          onAccept={acceptProposals}
+          onReject={rejectProposals}
+          onRereview={rereviewProposal}
+        />
       )}
       {workspace.segments.map((segment, index) => (
         <TranscriptBlockEditor
