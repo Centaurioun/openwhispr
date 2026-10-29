@@ -155,11 +155,11 @@
 
 **Interfaces:** acceptance fixtures: plain transcript 1h, multi-speaker timed segments, unsorted/missing timestamps, Turkish diacritics, named entities and decimals, speaker locks, app restart and permission changes.
 
-- [ ] **Step 1:** Write failing fixtures for 1h/2h content stability, cancellation, process crash, multiple windows, user switching, corrupt overlay fallback, and no remote text transfer without consent.
-- [ ] **Step 2:** Run targeted tests and document actual failures.
-- [ ] **Step 3:** Apply only evidence-backed repairs; write QA instructions for manual keyboard, screen reader, focus, macOS/Windows smoke tests and data migration.
-- [ ] **Step 4:** Run full suite/quality checks; verify on disposable profile, not the user's live data.
-- [ ] **Step 5:** Commit `test(transcript): enforce end-to-end editing integrity`.
+- [x] **Step 1:** Write failing fixtures for 1h/2h content stability, cancellation, process crash, multiple windows, user switching, corrupt overlay fallback, and no remote text transfer without consent.
+- [x] **Step 2:** Run targeted tests and document actual failures.
+- [x] **Step 3:** Apply only evidence-backed repairs; write QA instructions for manual keyboard, screen reader, focus, macOS/Windows smoke tests and data migration.
+- [x] **Step 4:** Run full suite/quality checks; verify on disposable profile, not the user's live data.
+- [x] **Step 5:** Commit `test(transcript): enforce end-to-end editing integrity`.
 
 ## Deliverable / Gate
 
