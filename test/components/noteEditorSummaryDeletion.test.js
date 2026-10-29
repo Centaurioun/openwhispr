@@ -833,13 +833,14 @@ test("each tab has its own body editor, so undo never carries over between tabs"
   await unmount();
 });
 
-test("Studio transcript export stays hidden until approved-content resolution exists", async (t) => {
+test("Studio transcript export offers explicit original and approved versions", async (t) => {
   const { render, click, latest, unmount } = await loadNoteEditor(t);
   const rawTranscript = "Original transcript";
+  const exports = [];
   await render(undefined, {
     note: { ...NOTE, transcript: rawTranscript },
-    onExportTranscript() {
-      assert.fail("the legacy note-ID export must not be invoked from Transcript Studio");
+    onExportTranscript(format, version) {
+      exports.push({ format, version });
     },
   });
   await click("transcript");
@@ -848,7 +849,15 @@ test("Studio transcript export stays hidden until approved-content resolution ex
   walk(latest(), (node) => {
     if (Array.isArray(node.props.exportOptions)) exportOptions = node.props.exportOptions;
   });
-  assert.deepEqual(exportOptions, []);
+  assert.equal(exportOptions.length, 8);
+  for (const option of exportOptions) option.onSelect();
+  assert.deepEqual(
+    exports,
+    ["txt", "srt", "md", "json"].flatMap((format) => [
+      { format, version: "original" },
+      { format, version: "approved" },
+    ])
+  );
   assert.ok(transcriptStudio(latest()), "the transcript is rendered by Studio");
   await unmount();
 });

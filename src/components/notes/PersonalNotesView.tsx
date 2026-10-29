@@ -16,6 +16,11 @@ import type { NoteMoveTarget } from "../../hooks/useNoteDragAndDrop";
 import type { ActionItem, ActionKind, NoteItem } from "../../types/electron";
 import { buildNoteRunInput } from "../../helpers/templatePrompts";
 import {
+  resolveTranscriptForUse,
+  resolvedSegmentsAsTranscript,
+  type TranscriptUseVersion,
+} from "../../custom-features/transcript-studio/domain/transcriptResolver";
+import {
   useSettingsStore,
   selectIsCloudNoteFormattingMode,
   selectPolicyEffectiveSettings,
@@ -100,6 +105,12 @@ import {
 
 function makeContentHash(content: string): string {
   return String(content.length) + "-" + content.slice(0, 50);
+}
+
+function makeTranscriptSummaryHash(content: string, transcript: string, identity?: string): string {
+  return makeContentHash(
+    identity ? `${identity}\n${content}\n${transcript}` : `${content}\n${transcript}`
+  );
 }
 
 function parseNoteParticipants(raw: string | null | undefined): CalendarAttendee[] {
@@ -685,6 +696,33 @@ export default function PersonalNotesView({
   } = useActionProcessing(activeNoteId ?? null);
 
   const activeNoteRawTranscript = activeNote?.transcript || "";
+  const [approvedTranscriptIdentity, setApprovedTranscriptIdentity] = useState("");
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      if (!activeNote?.id || !activeNoteRawTranscript) {
+        setApprovedTranscriptIdentity("");
+        return;
+      }
+      void resolveTranscriptForUse(activeNote.id, "summary", "approved").then(
+        (resolved) => {
+          if (active)
+            setApprovedTranscriptIdentity(
+              resolved.version > 0 ? `${resolved.version}:${resolved.sourceHash}` : ""
+            );
+        },
+        () => {
+          if (active) setApprovedTranscriptIdentity("");
+        }
+      );
+    };
+    refresh();
+    window.addEventListener("transcript-studio:revision-updated", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("transcript-studio:revision-updated", refresh);
+    };
+  }, [activeNote?.id, activeNoteRawTranscript]);
   const activeDraft = draft?.noteId === activeNote?.id ? draft : null;
   const editorNote = activeNote
     ? {
@@ -700,11 +738,16 @@ export default function PersonalNotesView({
 
   const isEnhancementStale = useMemo(() => {
     if (!editorEnhancedContent || !activeNote?.enhanced_at_content_hash) return false;
-    const currentHash = makeContentHash(`${editorNote?.content ?? ""}\n${activeNoteRawTranscript}`);
+    const currentHash = makeTranscriptSummaryHash(
+      editorNote?.content ?? "",
+      activeNoteRawTranscript,
+      approvedTranscriptIdentity
+    );
     return currentHash !== activeNote.enhanced_at_content_hash;
   }, [
     activeNote?.enhanced_at_content_hash,
     activeNoteRawTranscript,
+    approvedTranscriptIdentity,
     editorEnhancedContent,
     editorNote?.content,
   ]);
@@ -718,11 +761,30 @@ export default function PersonalNotesView({
   );
 
   const handleExportTranscript = useCallback(
-    async (format: "txt" | "srt" | "json" | "md") => {
+    async (format: "txt" | "srt" | "json" | "md", version: TranscriptUseVersion) => {
       if (!activeNoteId) return;
-      await window.electronAPI.exportTranscript(activeNoteId, format);
+      try {
+        const resolved = await resolveTranscriptForUse(activeNoteId, "export", version);
+        const result = await window.electronAPI.exportTranscript(activeNoteId, format, {
+          version,
+          expectedSourceHash: resolved.sourceHash,
+        });
+        if (!result?.success && result?.error) {
+          toast({
+            title: "Transcript unavailable",
+            description: result.error,
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        toast({
+          title: "Transcript unavailable",
+          description: error instanceof Error ? error.message : "Could not resolve transcript.",
+          variant: "destructive",
+        });
+      }
     },
-    [activeNoteId]
+    [activeNoteId, toast]
   );
 
   useEffect(() => {
@@ -776,9 +838,26 @@ export default function PersonalNotesView({
       transcript: liveTranscript,
       isTranscribing: liveIsTranscribing,
     } = useMeetingRecordingStore.getState();
-    const rawTranscript =
+    let rawTranscript =
       (liveIsTranscribing && liveNoteId === activeNote?.id ? liveTranscript : "") ||
       activeNoteRawTranscript;
+    const rawTranscriptForHash = rawTranscript;
+    let summaryHashIdentity = "";
+    if (rawTranscript && !(liveIsTranscribing && liveNoteId === activeNote?.id)) {
+      try {
+        const resolved = await resolveTranscriptForUse(editorNote.id, "summary", "approved");
+        rawTranscript = JSON.stringify(resolvedSegmentsAsTranscript(resolved.segments));
+        summaryHashIdentity =
+          resolved.version > 0 ? `${resolved.version}:${resolved.sourceHash}` : "";
+      } catch (error) {
+        toast({
+          title: "Transcript unavailable",
+          description: error instanceof Error ? error.message : "Could not resolve transcript.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     const noteContent = editorNote.content;
     const hasNotes = !!noteContent.trim();
     if (!hasNotes && !rawTranscript) return;
@@ -848,20 +927,29 @@ export default function PersonalNotesView({
       meetingContext,
       transcript: formattedTranscript,
     });
-    runAction(action, input, makeContentHash(`${noteContent}\n${rawTranscript}`), {
-      isCloudMode,
-      modelId: effectiveModelId,
-      isMeetingNote,
-      hasPlainTranscript,
-      knownPeople,
-      fromSummary,
-      material,
-      allowTitleGeneration: isRegenerableNoteTitle(
-        editorNote.title,
-        [t("notes.list.untitledNote"), t("notes.list.newNote"), t("notes.sidebar.newNote")],
-        calendarEventName
+    runAction(
+      action,
+      input,
+      makeTranscriptSummaryHash(
+        noteContent,
+        rawTranscriptForHash,
+        liveIsTranscribing && liveNoteId === activeNote?.id ? "" : summaryHashIdentity
       ),
-    });
+      {
+        isCloudMode,
+        modelId: effectiveModelId,
+        isMeetingNote,
+        hasPlainTranscript,
+        knownPeople,
+        fromSummary,
+        material,
+        allowTitleGeneration: isRegenerableNoteTitle(
+          editorNote.title,
+          [t("notes.list.untitledNote"), t("notes.list.newNote"), t("notes.sidebar.newNote")],
+          calendarEventName
+        ),
+      }
+    );
   };
 
   if (!isOnboardingComplete) {

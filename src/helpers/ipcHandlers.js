@@ -3285,13 +3285,51 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("export-transcript", async (event, noteId, format) => {
+    ipcMain.handle("export-transcript", async (event, noteId, format, resolved) => {
       try {
         const note = this.databaseManager.getNote(noteId);
         if (!note) return { success: false, error: "Note not found" };
 
-        const segments = JSON.parse(note.transcript || "[]");
+        let segments;
+        let resolvedSourceTranscript = null;
+        let resolvedOriginal = false;
+        let resolvedSourceIsValidJson = false;
+        if (resolved !== undefined) {
+          if (
+            !resolved ||
+            !(resolved.version === "original" || resolved.version === "approved") ||
+            typeof resolved.expectedSourceHash !== "string"
+          ) {
+            return { success: false, error: "Invalid transcript selection" };
+          }
+          // Re-read through the active-account-scoped repository so a stale
+          // renderer selection or revoked note access cannot be exported.
+          const workspace = this.databaseManager.getTranscriptWorkspace(noteId);
+          const { resolveTranscriptExport } = require("./transcriptStudioExport");
+          const result = resolveTranscriptExport(workspace, resolved);
+          segments = result.segments;
+          resolvedOriginal = result.isOriginal;
+          resolvedSourceTranscript = result.sourceTranscript;
+          resolvedSourceIsValidJson = result.sourceIsValidJson;
+        } else {
+          segments = JSON.parse(note.transcript || "[]");
+        }
         if (!segments.length) return { success: false, error: "No transcript available" };
+        if (
+          (format === "srt" &&
+            segments.some(
+              (segment) =>
+                typeof segment.timestamp !== "number" ||
+                !Number.isFinite(segment.timestamp) ||
+                segment.timestamp < 0
+            )) ||
+          (format === "srt" &&
+            segments.some(
+              (segment, index) => index > 0 && segment.timestamp < segments[index - 1].timestamp
+            ))
+        ) {
+          return { success: false, error: "SRT export requires transcript timestamps" };
+        }
 
         const speakerMappings = this._buildSpeakerMappings(noteId);
 
@@ -3315,7 +3353,9 @@ class IPCHandlers {
 
         const transcriptFormatter = require("./transcriptFormatter");
         let exportContent;
-        if (format === "txt") {
+        if (resolvedOriginal && resolvedSourceIsValidJson && format === "json") {
+          exportContent = resolvedSourceTranscript;
+        } else if (format === "txt") {
           exportContent = transcriptFormatter.formatTxt(note, segments, speakerMappings);
         } else if (format === "srt") {
           exportContent = transcriptFormatter.formatSrt(segments, speakerMappings, note);

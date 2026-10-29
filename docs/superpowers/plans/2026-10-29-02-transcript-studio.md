@@ -143,11 +143,11 @@
 
 **Interfaces:** `resolveTranscriptForUse(noteId:number, purpose:'display'|'export'|'summary'|'mcp', version:'original'|'approved'):Promise<{text:string;segments:SourceSegment[];sourceHash:string}>` with explicit current permission check. For export, user selects original or approved. If no approved revision, resolve original. SRT available only for meaningful timestamps; no fabrication.
 
-- [ ] **Step 1:** Write failing tests for approved transcript default display, original export byte fidelity, summary input selection, JSON/MD/TXT/SRT formats and invalid timing; unchanged notes behave as before.
-- [ ] **Step 2:** Verify red tests.
-- [ ] **Step 3:** Implement one resolver; adapt existing `transcriptFormatter.js` and relevant UI action calls. Do not change cloud sync/update payloads by default or mutate the raw data; show stale-overlay warning if sourceHash mismatches.
-- [ ] **Step 4:** Run targeted plus existing tests for note export and transcriptions; `npm run lint`, `npm run typecheck`, `npm run i18n:check`, `npm run build:renderer`, `npm test`.
-- [ ] **Step 5:** Commit `feat(transcript): export approved or original revisions safely`.
+- [x] **Step 1:** Write failing tests for approved transcript default display, original export byte fidelity, summary input selection, JSON/MD/TXT/SRT formats and invalid timing; unchanged notes behave as before.
+- [x] **Step 2:** Verify red tests.
+- [x] **Step 3:** Implement one resolver; adapt existing `transcriptFormatter.js` and relevant UI action calls. Do not change cloud sync/update payloads by default or mutate the raw data; show stale-overlay warning if sourceHash mismatches.
+- [x] **Step 4:** Run targeted plus existing tests for note export and transcriptions; `npm run lint`, `npm run typecheck`, `npm run i18n:check`, `npm run build:renderer`, `npm test`.
+- [x] **Step 5:** Commit `feat(transcript): export approved or original revisions safely`.
 
 ### Task 9: Long-Form, Privacy, Accessibility and Recovery Acceptance
 

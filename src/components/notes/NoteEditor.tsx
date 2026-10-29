@@ -223,7 +223,10 @@ interface NoteEditorProps {
   onStartRecording: () => void;
   onStopRecording: () => void;
   onExportNote?: (format: "md" | "txt") => void;
-  onExportTranscript?: (format: "txt" | "srt" | "json" | "md") => void;
+  onExportTranscript?: (
+    format: "txt" | "srt" | "json" | "md",
+    version: "original" | "approved"
+  ) => void;
   enhancement?: Enhancement;
   /** Runs a template, or an action that edits the summary, on this note. */
   onRunNoteAction?: (action: ActionItem) => void;
@@ -1081,12 +1084,14 @@ export default function NoteEditor({
   }, []);
 
   const exportOptions = useMemo<NoteExportOption[]>(() => {
-    if (viewMode === "transcript" && !hasMeetingTranscript && onExportTranscript) {
-      return (["txt", "srt", "md", "json"] as const).map((format) => ({
-        id: format,
-        label: t(TRANSCRIPT_EXPORT_LABEL_KEYS[format]),
-        onSelect: () => onExportTranscript(format),
-      }));
+    if (viewMode === "transcript" && hasMeetingTranscript && !isRecording && onExportTranscript) {
+      return (["txt", "srt", "md", "json"] as const).flatMap((format) =>
+        (["original", "approved"] as const).map((version) => ({
+          id: `${format}-${version}`,
+          label: `${t(TRANSCRIPT_EXPORT_LABEL_KEYS[format])} — ${version === "original" ? "Original" : "Approved"}`,
+          onSelect: () => onExportTranscript(format, version),
+        }))
+      );
     }
     if (!onExportNote) return [];
     return (["md", "txt"] as const).map((format) => ({
@@ -1094,7 +1099,7 @@ export default function NoteEditor({
       label: t(NOTE_EXPORT_LABEL_KEYS[format]),
       onSelect: () => onExportNote(format),
     }));
-  }, [hasMeetingTranscript, viewMode, onExportTranscript, onExportNote, t]);
+  }, [hasMeetingTranscript, isRecording, viewMode, onExportTranscript, onExportNote, t]);
 
   return (
     <div className="flex h-full min-h-0">

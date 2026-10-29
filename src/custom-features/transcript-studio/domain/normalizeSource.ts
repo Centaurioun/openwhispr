@@ -94,6 +94,9 @@ export async function normalizeTranscriptSource(raw: string): Promise<Normalized
       endSeconds: seconds(segment.endTimestamp),
       speakerLocked: isTranscriptSpeakerLocked(lockable),
       sourceIndex,
+      ...(segment.source === "mic" || segment.source === "system"
+        ? { source: segment.source }
+        : {}),
     };
   });
 

@@ -276,7 +276,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   discardNoteUndo: (id, token) => ipcRenderer.invoke("db-discard-note-undo", id, token),
   deleteNote: (id) => ipcRenderer.invoke("db-delete-note", id),
   exportNote: (noteId, format) => ipcRenderer.invoke("export-note", noteId, format),
-  exportTranscript: (noteId, format) => ipcRenderer.invoke("export-transcript", noteId, format),
+  exportTranscript: (noteId, format, resolved) =>
+    ipcRenderer.invoke("export-transcript", noteId, format, resolved),
   exportDictionary: (words) => ipcRenderer.invoke("export-dictionary", words),
   searchNotes: (query, limit, spaceId, folderId, spaceIds) =>
     ipcRenderer.invoke("db-search-notes", query, limit, spaceId, folderId, spaceIds),

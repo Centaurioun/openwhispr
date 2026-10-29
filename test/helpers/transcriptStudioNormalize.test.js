@@ -46,6 +46,7 @@ test("preserves segment speaker labels, lock state, and timing", async () => {
     endSeconds: 3.5,
     speakerLocked: true,
     sourceIndex: 0,
+    source: "system",
   });
 });
 

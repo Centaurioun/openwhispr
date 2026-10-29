@@ -7,6 +7,7 @@ export interface SourceSegment {
   endSeconds: number | null;
   speakerLocked: boolean;
   sourceIndex: number;
+  source?: "mic" | "system";
   suggestedName?: string | null;
   suggestedProfileId?: number | null;
   recorderName?: string | null;

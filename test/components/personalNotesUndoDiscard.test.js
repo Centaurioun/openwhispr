@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const React = require("react");
 const { createRoot } = require("react-dom/client");
+const { createHash } = require("node:crypto");
 const {
   createRendererServer,
   installBrowserGlobals,
@@ -74,17 +75,36 @@ const MOCKS = {
 
 async function mountView(t, updateNote) {
   const calls = [];
+  const windowListeners = new Map();
   let root;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
     delete globalThis.__editorProps;
     delete globalThis.__note;
+    delete globalThis.__transcriptWorkspaceOverrides;
   });
   globalThis.__note = NOTE;
   installBrowserGlobals(t, {
     window: {
       electronAPI: {
         getNote: async () => NOTE,
+        getTranscriptWorkspace: async (noteId) => {
+          const sourceTranscript = globalThis.__note?.transcript ?? "";
+          const sourceHash = createHash("sha256").update(sourceTranscript, "utf8").digest("hex");
+          const overrides = globalThis.__transcriptWorkspaceOverrides ?? {};
+          return {
+            noteId,
+            sourceTranscript,
+            originalTranscript: sourceTranscript,
+            sourceHash,
+            baselineSourceHash: sourceHash,
+            currentVersion:
+              overrides.currentVersion ?? (overrides.approvedOperations?.length ? 1 : 0),
+            versionId: overrides.approvedOperations?.length ? "approved-1" : null,
+            approvedOperations: overrides.approvedOperations ?? [],
+            stale: overrides.stale ?? false,
+          };
+        },
         updateNote: async (...args) => {
           calls.push(["save", ...args]);
           return updateNote ? updateNote(...args) : { success: true };
@@ -92,6 +112,16 @@ async function mountView(t, updateNote) {
         discardNoteUndo: async (...args) => calls.push(["discard", ...args]),
       },
       setTimeout: (fn, ms) => setTimeout(fn, ms),
+      addEventListener: (type, listener) => {
+        const listeners = windowListeners.get(type) ?? new Set();
+        listeners.add(listener);
+        windowListeners.set(type, listeners);
+      },
+      removeEventListener: (type, listener) => windowListeners.get(type)?.delete(listener),
+      dispatchEvent: (event) => {
+        for (const listener of windowListeners.get(event.type) ?? []) listener(event);
+        return true;
+      },
     },
   });
   const container = installHostDom(t);
@@ -294,13 +324,19 @@ const USER_AND_INVITEE = [
   { name: "Alice Ng", email: "alice@example.com" },
 ];
 
-async function runSummaryOn(t, note, speakerMappings = [], { user, spaces, roster } = {}) {
+async function runSummaryOn(
+  t,
+  note,
+  speakerMappings = [],
+  { user, spaces, roster, approvedOperations, stale } = {}
+) {
   const calls = await mountView(t);
   globalThis.window.electronAPI.getSpeakerMappings = async () => speakerMappings;
   globalThis.__noteActionCalls = [];
   globalThis.__user = user ?? { name: "Sam Rivera", email: "sam@example.com" };
   globalThis.__spaces = spaces;
   globalThis.__roster = roster;
+  globalThis.__transcriptWorkspaceOverrides = { approvedOperations, stale };
   t.after(() => {
     delete globalThis.__noteActionCalls;
     delete globalThis.__user;
@@ -328,6 +364,75 @@ test("a transcript stored as plain text runs as one, with the user and the invit
     `${NOTE.content}\n\n## Meeting Transcript\n${transcript}`,
     "no Meeting Context, and the transcript as stored"
   );
+});
+
+test("summary generation uses approved transcript text while preserving the raw source", async (t) => {
+  const raw = JSON.stringify([
+    { source: "mic", speaker: "speaker_1", speakerName: "Sam", timestamp: 0, text: "Raw words." },
+  ]);
+  const sourceHash = createHash("sha256").update(raw, "utf8").digest("hex");
+  const { input } = await runSummaryOn(t, { transcript: raw }, [], {
+    approvedOperations: [
+      {
+        kind: "replaceText",
+        segmentId: `source-${sourceHash.slice(0, 16)}-0`,
+        before: "Raw words.",
+        after: "Approved words.",
+      },
+    ],
+  });
+
+  assert.match(input, /Approved words\./);
+  assert.doesNotMatch(input, /Raw words\./);
+  assert.equal(
+    globalThis.__note.transcript,
+    raw,
+    "resolving summary input never rewrites notes.transcript"
+  );
+});
+
+test("an approved revision makes a saved summary stale without changing the raw transcript", async (t) => {
+  const raw = JSON.stringify([{ text: "Original wording." }]);
+  const sourceHash = createHash("sha256").update(raw, "utf8").digest("hex");
+  const segmentId = `source-${sourceHash.slice(0, 16)}-0`;
+  const firstOperation = {
+    kind: "replaceText",
+    segmentId,
+    before: "Original wording.",
+    after: "First approved wording.",
+  };
+  const calls = await mountView(t);
+  globalThis.__noteActionCalls = [];
+  globalThis.__note = { ...NOTE, transcript: raw, enhanced_content: null };
+  globalThis.__transcriptWorkspaceOverrides = {
+    approvedOperations: [firstOperation],
+    currentVersion: 1,
+  };
+  await calls.rerender();
+  await React.act(async () => {
+    await globalThis.__editorProps.onRunNoteAction(AI_SUMMARY);
+  });
+  const [, , summaryHash] = globalThis.__noteActionCalls[0];
+  globalThis.__note = {
+    ...globalThis.__note,
+    enhanced_content: "Summary based on first approved wording.",
+    enhanced_at_content_hash: summaryHash,
+  };
+  await calls.rerender();
+  await React.act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(globalThis.__editorProps.enhancement.isStale, false);
+
+  globalThis.__transcriptWorkspaceOverrides = {
+    approvedOperations: [{ ...firstOperation, after: "Second approved wording." }],
+    currentVersion: 2,
+  };
+  await React.act(async () =>
+    globalThis.window.dispatchEvent({ type: "transcript-studio:revision-updated" })
+  );
+  await React.act(async () => new Promise((resolve) => setTimeout(resolve, 25)));
+  await calls.rerender();
+  assert.equal(globalThis.__editorProps.enhancement.isStale, true);
+  assert.equal(globalThis.__note.transcript, raw);
 });
 
 test("a meeting with speakers keeps its Meeting Context, speaker lines and known people", async (t) => {

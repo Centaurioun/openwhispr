@@ -227,6 +227,7 @@ export function TranscriptStudioView({
           versionId: result.workspace.versionId ?? "",
         };
         setCurrentVersion(result.version);
+        window.dispatchEvent(new Event("transcript-studio:revision-updated"));
         setVersions(await transcriptStudioRepository.listTranscriptVersions(noteId));
         versionForSnapshotRef.current.set(
           operationSnapshot(resultingWorkspace),
@@ -450,6 +451,7 @@ export function TranscriptStudioView({
             versionId: restored.versionId ?? "",
           };
           setCurrentVersion(restored.currentVersion);
+          window.dispatchEvent(new Event("transcript-studio:revision-updated"));
           setVersions(await transcriptStudioRepository.listTranscriptVersions(noteId));
           versionForSnapshotRef.current.set(
             operationSnapshot(targetWorkspace),
@@ -536,6 +538,7 @@ export function TranscriptStudioView({
           versionId: restored.versionId ?? "",
         };
         setCurrentVersion(restored.currentVersion);
+        window.dispatchEvent(new Event("transcript-studio:revision-updated"));
         setVersions(await transcriptStudioRepository.listTranscriptVersions(noteId));
         versionForSnapshotRef.current = new Map([
           [operationSnapshot(restoredWorkspace), restored.versionId ?? ""],

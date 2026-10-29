@@ -18,6 +18,11 @@ export interface TranscriptStudioWorkspace {
   stale: boolean;
 }
 
+export interface ResolvedTranscriptExport {
+  version: "original" | "approved";
+  expectedSourceHash: string;
+}
+
 export interface TranscriptStudioVersionMeta {
   versionId: string;
   version: number;
@@ -1922,7 +1927,8 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>;
       exportTranscript: (
         noteId: number,
-        format: "txt" | "srt" | "json" | "md"
+        format: "txt" | "srt" | "json" | "md",
+        resolved?: ResolvedTranscriptExport
       ) => Promise<{ success: boolean; error?: string }>;
       exportDictionary: (words: string[]) => Promise<{ success: boolean; error?: string }>;
       searchNotes: (
