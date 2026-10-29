@@ -1,0 +1,57 @@
+name: Custom integration
+
+on:
+  pull_request:
+    branches:
+      - custom/main
+  push:
+    branches:
+      - feature/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: custom-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Custom integration regression checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build better-sqlite3 for Node.js 24
+        run: npm rebuild better-sqlite3
+
+      - name: Test
+        run: npm test
+        env:
+          ELECTRON_OVERRIDE_DIST_PATH: /tmp
+          REQUIRE_DB_TESTS: '1'
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check translations
+        run: npm run i18n:check
+
+      - name: Build renderer
+        run: npm run build:renderer
+
+      # This Linux runner checks the renderer and JavaScript quality gates. It does not
+      # build or certify the platform-specific native helpers or packaged app targets.
