@@ -33,6 +33,12 @@ If the `upstream` remote is absent, obtain approval for any needed local configu
 
 ## Integrations and release guardrails
 
+### Custom release acceptance
+
+Use [the release checklist](release-checklist.md) for every custom-fork release candidate. Release is **NO-GO** while any required evidence is incomplete or missing; record the specific blocker. A human release reviewer must record explicit sign-off for the exact candidate after reviewing the clean branch, green tests, and all manual smoke-test evidence. Documentation, source inspection, or CI cannot establish that manual smoke tests passed.
+
+Build and install the custom fork with a separate custom application identity and installation so it can be distinguished from the upstream application. Do not replace an existing application or alter, migrate, or reuse an existing user profile without separate human review of the identity, installation, and profile safety. This checklist does not authorize deployment, publishing, installation, or profile migration.
+
 ### Upstream integration procedure
 
 Use the reviewed path `upstream/main → clean baseline main → PR to custom/main`:
