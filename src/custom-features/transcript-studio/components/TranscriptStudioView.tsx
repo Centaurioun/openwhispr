@@ -14,6 +14,9 @@ import {
 } from "../stores/transcriptStudioStore";
 import { TranscriptBlockEditor } from "./TranscriptBlockEditor";
 import type { TranscriptStudioWorkspace } from "../../../types/electron";
+import { startTranscriptEditJob, type TranscriptEditEvent } from "../process/transcriptEditJob";
+import { getSettings } from "../../../stores/settingsStore";
+import { usePolicyStore } from "../../../stores/policyStore";
 
 interface TranscriptStudioViewProps {
   noteId: number;
@@ -47,6 +50,8 @@ const EMPTY_SELECTED_SEGMENTS = new Set<string>();
 const EMPTY_SPEAKER_MAPPINGS: Record<string, string> = {};
 const ignoreToggle = () => {};
 const operationSnapshot = (workspace: TranscriptEditWorkspace) => JSON.stringify(workspace);
+const proposalDraftKey = (accountKey: string, noteId: number, sourceHash: string) =>
+  `transcript-studio-proposals:${accountKey}:${noteId}:${sourceHash}`;
 
 function revisionIsStale(workspace: TranscriptStudioWorkspace, sourceHash: string): boolean {
   return (
@@ -95,6 +100,30 @@ export function TranscriptStudioView({
   const [loading, setLoading] = useState(true);
   const [stale, setStale] = useState(false);
   const [error, setError] = useState("");
+  const [jobMessage, setJobMessage] = useState("");
+  const [jobProgress, setJobProgress] = useState("");
+  const [proposals, setProposals] = useState<
+    Array<Extract<TranscriptEditEvent, { type: "chunkProposed" }>>
+  >([]);
+  const [jobRunning, setJobRunning] = useState(false);
+  const [resumeFromChunk, setResumeFromChunk] = useState(0);
+  const jobControllerRef = useRef<AbortController | null>(null);
+  const accountKey = usePolicyStore(
+    (state) => `${state.accountId ?? "anonymous"}:${state.authGeneration ?? "none"}`
+  );
+  const proposalKeyRef = useRef("");
+
+  useEffect(() => () => jobControllerRef.current?.abort(), [noteId, sourceTranscript]);
+  useEffect(() => {
+    const key = proposalDraftKey(accountKey, noteId, metadataRef.current.sourceHash);
+    proposalKeyRef.current = key;
+    try {
+      const saved = window.sessionStorage?.getItem(key);
+      setProposals(saved ? JSON.parse(saved) : []);
+    } catch {
+      setProposals([]);
+    }
+  }, [accountKey, noteId, metadataRef.current.sourceHash]);
 
   useEffect(() => {
     let active = true;
@@ -417,6 +446,87 @@ export function TranscriptStudioView({
     [canEdit, error, noteId, session, stale]
   );
 
+  const startAiEdit = useCallback(async () => {
+    if (!canEdit || stale || loading || jobRunning) return;
+    const controller = new AbortController();
+    jobControllerRef.current?.abort();
+    jobControllerRef.current = controller;
+    setJobRunning(true);
+    setJobMessage("");
+    const settings = getSettings();
+    proposalKeyRef.current = proposalDraftKey(accountKey, noteId, metadataRef.current.sourceHash);
+    try {
+      const saved = window.sessionStorage?.getItem(proposalKeyRef.current);
+      if (saved) setProposals(JSON.parse(saved));
+    } catch {
+      setProposals([]);
+    }
+    const providerChoice =
+      settings.cleanupMode === "providers"
+        ? settings.cleanupProvider
+        : settings.cleanupMode === "enterprise"
+          ? "enterprise"
+          : settings.cleanupMode === "self-hosted"
+            ? "self-hosted"
+            : settings.cleanupMode;
+    try {
+      for await (const event of startTranscriptEditJob({
+        noteId,
+        sourceHash: metadataRef.current.sourceHash,
+        providerChoice,
+        strictMode: true,
+        selectedIds: selectedSegmentIds.size ? [...selectedSegmentIds] : undefined,
+        signal: controller.signal,
+        resumeFromChunk,
+      })) {
+        if (event.type === "chunkProposed") {
+          setProposals((previous) => {
+            const next = [...previous.filter((item) => item.chunk.id !== event.chunk.id), event];
+            try {
+              window.sessionStorage?.setItem(proposalKeyRef.current, JSON.stringify(next));
+            } catch {
+              /* proposals remain in this session */
+            }
+            return next;
+          });
+        } else if (event.type === "progress") {
+          setResumeFromChunk(event.chunkIndex + 1);
+          setJobProgress(`Processed ${event.completed} of ${event.total} transcript chunks.`);
+        } else if (event.type === "warning") {
+          setJobMessage(event.message);
+          if (/account, note, or source changed/i.test(event.message)) {
+            setProposals([]);
+            try {
+              window.sessionStorage?.removeItem(proposalKeyRef.current);
+            } catch {
+              /* ignore unavailable storage */
+            }
+          }
+        } else if (event.type === "failed") {
+          setResumeFromChunk(event.resumeFromChunk);
+          setJobMessage(`${event.message} You can resume from this chunk.`);
+        } else if (event.type === "done") {
+          setJobRunning(false);
+          if (event.cancelled) setJobProgress("Transcript edit job cancelled.");
+        }
+      }
+    } catch (jobError) {
+      setJobMessage(jobError instanceof Error ? jobError.message : "Transcript edit job failed.");
+    } finally {
+      setJobRunning(false);
+      if (jobControllerRef.current === controller) jobControllerRef.current = null;
+    }
+  }, [
+    accountKey,
+    canEdit,
+    jobRunning,
+    loading,
+    noteId,
+    resumeFromChunk,
+    selectedSegmentIds,
+    stale,
+  ]);
+
   if (loading)
     return <div className="px-4 py-6 text-sm text-muted-foreground">Loading transcript…</div>;
   const sessionState = session.getState();
@@ -464,7 +574,67 @@ export function TranscriptStudioView({
         >
           Redo
         </button>
+        <button
+          type="button"
+          disabled={!canEdit || stale || jobRunning}
+          onClick={() => void startAiEdit()}
+        >
+          {resumeFromChunk > 0 ? "Resume AI edit" : "Edit transcript with AI"}
+        </button>
+        {jobRunning && (
+          <button type="button" onClick={() => jobControllerRef.current?.abort()}>
+            Cancel AI edit
+          </button>
+        )}
       </div>
+      {!!jobMessage && (
+        <p role="alert" className="mb-3 text-sm">
+          {jobMessage}
+        </p>
+      )}
+      {!!jobProgress && (
+        <p role="status" className="mb-3 text-sm">
+          {jobProgress}
+        </p>
+      )}
+      {proposals.length > 0 && (
+        <section
+          aria-label="Pending AI transcript proposals"
+          className="mb-4 rounded border border-border p-3"
+        >
+          <h3 className="font-medium">Pending AI proposals ({proposals.length})</h3>
+          <p className="text-xs text-muted-foreground">
+            Review and accept proposals in the proposal review step. Approved transcript text is
+            unchanged.
+          </p>
+          {proposals.map(({ chunk, candidate, validation }) => (
+            <article
+              key={chunk.id}
+              className="mt-2 border-t border-border/60 pt-2"
+              data-proposal-chunk={chunk.id}
+            >
+              <strong>Chunk {chunk.index + 1}</strong>
+              {validation.warnings.map((warning) => (
+                <p role="alert" key={warning}>
+                  {warning}
+                </p>
+              ))}
+              {validation.edits.map(
+                (edit) =>
+                  edit.kind === "replaceText" && (
+                    <p key={edit.segmentId} className="text-sm">
+                      <del>{edit.before}</del> → <ins>{edit.after}</ins>
+                    </p>
+                  )
+              )}
+              {!validation.edits.length && <p className="text-sm">No text changes proposed.</p>}
+              <span className="sr-only">
+                Candidate contains {candidate.segments.length} source blocks.
+              </span>
+            </article>
+          ))}
+        </section>
+      )}
       {workspace.segments.map((segment, index) => (
         <TranscriptBlockEditor
           key={segment.id}

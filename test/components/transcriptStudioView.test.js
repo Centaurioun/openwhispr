@@ -125,6 +125,50 @@ test("a transcript without an overlay shows the original text with no invented t
   assert.equal(host.querySelector("time"), null);
 });
 
+test("AI editing is idle until its explicit button is clicked and asks before remote processing", async (t) => {
+  const raw = '[{"text":"Keep this source unchanged"}]';
+  const normalized = await normalizeTranscriptSource(raw);
+  const workspace = {
+    noteId: 23,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  let consentRequests = 0;
+  const previousConfirm = happyWindow.confirm;
+  happyWindow.confirm = () => {
+    consentRequests += 1;
+    return false;
+  };
+  t.after(() => {
+    happyWindow.confirm = previousConfirm;
+  });
+  const { host } = await mount(
+    t,
+    { noteId: 23, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
+  assert.equal(consentRequests, 0);
+  assert.match(host.textContent, /Edit transcript with AI/);
+  const button = [...host.querySelectorAll("button")].find((candidate) =>
+    candidate.textContent.includes("Edit transcript with AI")
+  );
+  await React.act(async () =>
+    button.dispatchEvent(new happyWindow.MouseEvent("click", { bubbles: true }))
+  );
+  await waitFor(() => consentRequests === 1);
+  await waitFor(() => host.textContent.includes("No transcript text was sent"));
+  await React.act(async () => {});
+  assert.equal(consentRequests, 1);
+  assert.equal(host.querySelector("textarea").value, "Keep this source unchanged");
+  assert.equal(host.querySelector("[aria-label='Pending AI transcript proposals']"), null);
+});
+
 test("the approved revision is shown by default and stale overlays fall back to raw", async (t) => {
   const raw = '[{"text":"Original","speaker":"speaker_0","timestamp":3}]';
   const normalized = await normalizeTranscriptSource(raw);
