@@ -91,6 +91,14 @@ function apiFor(
     listTranscriptVersions: async () => [
       { versionId: `baseline:${workspace.sourceHash}`, version: 0, description: "Original" },
     ],
+    getTranscriptVersion: async (_noteId, versionId) => ({
+      versionId,
+      version: 0,
+      description: "Original",
+      createdAt: null,
+      sourceHash: workspace.sourceHash,
+      operations: [],
+    }),
     applyTranscriptRevision: onApply,
     restoreTranscriptVersion: onRestore,
   };
@@ -298,8 +306,119 @@ test("read-only transcript notes show text but no edit controls", async (t) => {
 
   assert.equal(host.querySelector("textarea").readOnly, true);
   assert.equal(
-    [...host.querySelectorAll("button")].some((button) => !button.disabled),
+    [...host.querySelectorAll("button")].some(
+      (button) => !button.disabled && !button.textContent.includes("Version history")
+    ),
     false
+  );
+});
+
+test("version history compares read-only and asks before restoring", async (t) => {
+  const raw = "Original transcript";
+  const normalized = await normalizeTranscriptSource(raw);
+  const workspace = {
+    noteId: 27,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  let restoreCalls = 0;
+  const api = apiFor(workspace, undefined, async () => {
+    restoreCalls += 1;
+    return workspace;
+  });
+  const { host } = await mount(t, { noteId: 27, sourceTranscript: raw, canEdit: true }, api);
+  const previousConfirm = happyWindow.confirm;
+  happyWindow.confirm = () => false;
+  t.after(() => {
+    happyWindow.confirm = previousConfirm;
+  });
+  const history = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent.includes("Version history")
+  );
+  await React.act(async () => history.click());
+  assert.match(host.textContent, /Original transcript/);
+  assert.ok(host.querySelector("[aria-label='Read-only version comparison']"));
+  const restore = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent.includes("Restore selected version")
+  );
+  await React.act(async () => restore.click());
+  assert.equal(restoreCalls, 0);
+});
+
+test("restoring a selected revision creates a new session baseline with empty Undo and Redo", async (t) => {
+  const raw = "Original line";
+  const normalized = await normalizeTranscriptSource(raw);
+  const edited = {
+    noteId: 28,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 1,
+    versionId: "version-1",
+    approvedOperations: [
+      {
+        kind: "replaceText",
+        segmentId: normalized.segments[0].id,
+        before: raw,
+        after: "Edited line",
+      },
+    ],
+    stale: false,
+  };
+  const restored = { ...edited, currentVersion: 2, versionId: "version-2", approvedOperations: [] };
+  const previousConfirm = happyWindow.confirm;
+  happyWindow.confirm = () => true;
+  t.after(() => {
+    happyWindow.confirm = previousConfirm;
+  });
+  const { host } = await mount(
+    t,
+    { noteId: 28, sourceTranscript: raw, canEdit: true },
+    {
+      ...apiFor(edited),
+      listTranscriptVersions: async () => [
+        {
+          versionId: `baseline:account:transcript-account:${normalized.sourceHash}`,
+          version: 0,
+          description: "Original transcript",
+        },
+        { versionId: "version-1", version: 1, description: "Manual edit" },
+      ],
+      getTranscriptVersion: async (_noteId, versionId) => ({
+        versionId,
+        version: 0,
+        description: "Original transcript",
+        createdAt: null,
+        sourceHash: normalized.sourceHash,
+        operations: [],
+      }),
+      restoreTranscriptVersion: async () => restored,
+    }
+  );
+  assert.equal(host.querySelector("textarea").value, "Edited line");
+  const history = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent.includes("Version history")
+  );
+  await React.act(async () => history.click());
+  const restore = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent.includes("Restore selected version")
+  );
+  await React.act(async () => restore.click());
+  assert.equal(host.querySelector("textarea").value, raw);
+  assert.equal(
+    [...host.querySelectorAll("button")].find((button) => button.textContent === "Undo").disabled,
+    true
+  );
+  assert.equal(
+    [...host.querySelectorAll("button")].find((button) => button.textContent === "Redo").disabled,
+    true
   );
 });
 

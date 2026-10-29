@@ -12,6 +12,7 @@ const {
 const path = require("path");
 const fs = require("fs");
 const { randomUUID, createHash } = require("crypto");
+const { deflateRawSync, inflateRawSync } = require("zlib");
 const { isDeepStrictEqual } = require("util");
 const noteUndo = require("./noteUndo");
 const debugLogger = require("./debugLogger");
@@ -30,6 +31,26 @@ const {
   NOTE_ACTION_LIMITS,
 } = require("./builtinActions");
 const { normalizeSections } = require("./templatePrompts");
+
+const TRANSCRIPT_SNAPSHOT_PREFIX = "deflate-raw-v1:";
+function encodeTranscriptSnapshot(operations) {
+  const json = JSON.stringify(operations);
+  const compressed = deflateRawSync(Buffer.from(json, "utf8"));
+  return compressed.length + 16 < Buffer.byteLength(json, "utf8")
+    ? TRANSCRIPT_SNAPSHOT_PREFIX + compressed.toString("base64")
+    : json;
+}
+
+function decodeTranscriptSnapshot(value) {
+  if (value.startsWith(TRANSCRIPT_SNAPSHOT_PREFIX)) {
+    return JSON.parse(
+      inflateRawSync(
+        Buffer.from(value.slice(TRANSCRIPT_SNAPSHOT_PREFIX.length), "base64")
+      ).toString("utf8")
+    );
+  }
+  return JSON.parse(value);
+}
 const {
   ANALYTICS_COUNTER_VERSION,
   ANALYTICS_HISTORY_BACKFILL_VERSION,
@@ -4302,7 +4323,10 @@ class DatabaseManager {
       )
       .get(noteId, scopeKey, workspace.current_version);
     if (!snapshot) throw new Error("Transcript revision snapshot is missing");
-    return { versionId: snapshot.version_id, operations: JSON.parse(snapshot.operations_json) };
+    return {
+      versionId: snapshot.version_id,
+      operations: decodeTranscriptSnapshot(snapshot.operations_json),
+    };
   }
 
   getTranscriptWorkspace(noteId) {
@@ -4363,6 +4387,36 @@ class DatabaseManager {
     ];
   }
 
+  getTranscriptVersion(noteId, versionId) {
+    const note = this._transcriptStudioAccessibleNote(noteId);
+    const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
+    const sourceHash = this._transcriptStudioSourceHash(sourceTranscript);
+    const scopeKey = this._transcriptStudioScopeKey(note);
+    const workspace = this.db
+      .prepare("SELECT * FROM transcript_workspaces WHERE note_id = ? AND scope_key = ?")
+      .get(noteId, scopeKey);
+    const baselineId = `baseline:${scopeKey}:${workspace?.source_hash ?? sourceHash}`;
+    if (versionId === baselineId) {
+      return {
+        versionId,
+        version: 0,
+        description: "Original transcript",
+        createdAt: null,
+        sourceHash: workspace?.source_hash ?? sourceHash,
+        operations: [],
+      };
+    }
+    const version = this.db
+      .prepare(
+        `SELECT version_id AS versionId, version, description, created_at AS createdAt,
+                source_hash AS sourceHash, operations_json
+         FROM transcript_versions WHERE note_id = ? AND scope_key = ? AND version_id = ?`
+      )
+      .get(noteId, scopeKey, versionId);
+    if (!version) throw new Error("Transcript version not found");
+    return { ...version, operations: decodeTranscriptSnapshot(version.operations_json) };
+  }
+
   applyTranscriptRevision({ noteId, expectedVersion, sourceHash, operations, description }) {
     if (!Array.isArray(operations) || typeof description !== "string") {
       throw new Error("Invalid transcript revision");
@@ -4407,7 +4461,7 @@ class DatabaseManager {
           scopeKey,
           version,
           currentSourceHash,
-          JSON.stringify(approvedOperations),
+          encodeTranscriptSnapshot(approvedOperations),
           description
         );
       this.db
@@ -4463,7 +4517,7 @@ class DatabaseManager {
         if (target.source_hash !== sourceHash) {
           throw new Error("Transcript source changed; stale versions cannot be restored");
         }
-        operations = JSON.parse(target.operations_json);
+        operations = decodeTranscriptSnapshot(target.operations_json);
       }
       if (!workspace) {
         this.db
@@ -4488,7 +4542,7 @@ class DatabaseManager {
           scopeKey,
           version,
           sourceHash,
-          JSON.stringify(operations),
+          encodeTranscriptSnapshot(operations),
           description
         );
       this.db

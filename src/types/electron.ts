@@ -25,6 +25,11 @@ export interface TranscriptStudioVersionMeta {
   createdAt: string | null;
 }
 
+export interface TranscriptStudioVersion extends TranscriptStudioVersionMeta {
+  sourceHash: string;
+  operations: unknown[];
+}
+
 export interface ApplyTranscriptRevisionInput {
   noteId: number;
   expectedVersion: number;
@@ -1864,6 +1869,7 @@ declare global {
         input: ApplyTranscriptRevisionInput
       ) => Promise<ApplyTranscriptRevisionResult>;
       listTranscriptVersions: (noteId: number) => Promise<TranscriptStudioVersionMeta[]>;
+      getTranscriptVersion: (noteId: number, versionId: string) => Promise<TranscriptStudioVersion>;
       restoreTranscriptVersion: (
         noteId: number,
         versionId: string,

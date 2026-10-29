@@ -2,6 +2,7 @@ import type {
   ApplyTranscriptRevisionInput,
   ApplyTranscriptRevisionResult,
   TranscriptStudioVersionMeta,
+  TranscriptStudioVersion,
   TranscriptStudioWorkspace,
 } from "../../../types/electron";
 
@@ -19,6 +20,10 @@ export const transcriptStudioRepository = {
 
   listTranscriptVersions(noteId: number): Promise<TranscriptStudioVersionMeta[]> {
     return window.electronAPI.listTranscriptVersions(noteId);
+  },
+
+  getTranscriptVersion(noteId: number, versionId: string): Promise<TranscriptStudioVersion> {
+    return window.electronAPI.getTranscriptVersion(noteId, versionId);
   },
 
   restoreTranscriptVersion(

@@ -2501,6 +2501,9 @@ class IPCHandlers {
     ipcMain.handle("transcript-studio-list-versions", (_event, noteId) =>
       this.databaseManager.listTranscriptVersions(noteId)
     );
+    ipcMain.handle("transcript-studio-get-version", (_event, noteId, versionId) =>
+      this.databaseManager.getTranscriptVersion(noteId, versionId)
+    );
     ipcMain.handle(
       "transcript-studio-restore-version",
       (_event, noteId, versionId, expectedVersion) =>

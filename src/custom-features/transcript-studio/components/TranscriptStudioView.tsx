@@ -13,11 +13,15 @@ import {
   type TranscriptStudioSessionState,
 } from "../stores/transcriptStudioStore";
 import { TranscriptBlockEditor } from "./TranscriptBlockEditor";
-import type { TranscriptStudioWorkspace } from "../../../types/electron";
+import type {
+  TranscriptStudioVersionMeta,
+  TranscriptStudioWorkspace,
+} from "../../../types/electron";
 import { startTranscriptEditJob, type TranscriptEditEvent } from "../process/transcriptEditJob";
 import { getSettings } from "../../../stores/settingsStore";
 import { usePolicyStore } from "../../../stores/policyStore";
 import { ProposalReview, type PendingTranscriptProposal } from "./ProposalReview";
+import { VersionHistory } from "./VersionHistory";
 
 interface TranscriptStudioViewProps {
   noteId: number;
@@ -53,6 +57,8 @@ const EMPTY_SELECTED_SEGMENTS = new Set<string>();
 const EMPTY_SPEAKER_MAPPINGS: Record<string, string> = {};
 const ignoreToggle = () => {};
 const operationSnapshot = (workspace: TranscriptEditWorkspace) => JSON.stringify(workspace);
+const workspaceText = (workspace: TranscriptEditWorkspace) =>
+  workspace.segments.map((segment) => segment.text).join("\n");
 const proposalDraftKey = (accountKey: string, noteId: number, sourceHash: string) =>
   `transcript-studio-proposals:${accountKey}:${noteId}:${sourceHash}`;
 
@@ -108,6 +114,10 @@ export function TranscriptStudioView({
   const [jobProgress, setJobProgress] = useState("");
   const [proposals, setProposals] = useState<PendingTranscriptProposal[]>([]);
   const [currentVersion, setCurrentVersion] = useState(0);
+  const [versions, setVersions] = useState<TranscriptStudioVersionMeta[]>([]);
+  const [compareVersionId, setCompareVersionId] = useState("");
+  const [compareText, setCompareText] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [jobRunning, setJobRunning] = useState(false);
   const [resumeFromChunk, setResumeFromChunk] = useState(0);
   const jobControllerRef = useRef<AbortController | null>(null);
@@ -171,6 +181,9 @@ export function TranscriptStudioView({
             ""),
       };
       setCurrentVersion(metadataRef.current.currentVersion);
+      setVersions(savedVersions);
+      setCompareVersionId(savedVersions[0]?.versionId ?? "");
+      setCompareText(workspaceText(source));
       versionForSnapshotRef.current = new Map([
         [operationSnapshot(initial), metadataRef.current.versionId],
       ]);
@@ -214,6 +227,7 @@ export function TranscriptStudioView({
           versionId: result.workspace.versionId ?? "",
         };
         setCurrentVersion(result.version);
+        setVersions(await transcriptStudioRepository.listTranscriptVersions(noteId));
         versionForSnapshotRef.current.set(
           operationSnapshot(resultingWorkspace),
           result.workspace.versionId ?? ""
@@ -435,6 +449,8 @@ export function TranscriptStudioView({
             currentVersion: restored.currentVersion,
             versionId: restored.versionId ?? "",
           };
+          setCurrentVersion(restored.currentVersion);
+          setVersions(await transcriptStudioRepository.listTranscriptVersions(noteId));
           versionForSnapshotRef.current.set(
             operationSnapshot(targetWorkspace),
             restored.versionId ?? ""
@@ -462,6 +478,75 @@ export function TranscriptStudioView({
     },
     [canEdit, error, noteId, session, stale]
   );
+
+  const selectComparison = useCallback(
+    async (versionId: string) => {
+      setCompareVersionId(versionId);
+      try {
+        const snapshot = await transcriptStudioRepository.getTranscriptVersion(noteId, versionId);
+        const source = await normalizeTranscriptSource(sourceTranscript);
+        const compared = applyEditOperations(source, snapshot.operations as EditOperation[], {
+          actor: "user",
+        });
+        setCompareText(workspaceText(compared));
+        setError("");
+      } catch (compareError) {
+        setError(
+          compareError instanceof Error ? compareError.message : "Version could not be loaded."
+        );
+      }
+    },
+    [noteId, sourceTranscript]
+  );
+
+  const restoreSelectedVersion = useCallback(async () => {
+    if (
+      !compareVersionId ||
+      stale ||
+      !canEdit ||
+      !window.confirm(
+        "Restore this transcript version? This creates a new version and keeps existing history."
+      )
+    )
+      return;
+    const restore = saveQueueRef.current.then(async () => {
+      try {
+        const restored = await transcriptStudioRepository.restoreTranscriptVersion(
+          noteId,
+          compareVersionId,
+          metadataRef.current.currentVersion
+        );
+        const source = await normalizeTranscriptSource(restored.sourceTranscript);
+        const restoredWorkspace = applyEditOperations(
+          source,
+          restored.approvedOperations as EditOperation[],
+          { actor: "user" }
+        );
+        session.getState().reset(restoredWorkspace);
+        metadataRef.current = {
+          sourceHash: restored.sourceHash,
+          currentVersion: restored.currentVersion,
+          versionId: restored.versionId ?? "",
+        };
+        setCurrentVersion(restored.currentVersion);
+        setVersions(await transcriptStudioRepository.listTranscriptVersions(noteId));
+        versionForSnapshotRef.current = new Map([
+          [operationSnapshot(restoredWorkspace), restored.versionId ?? ""],
+        ]);
+        setCompareVersionId(restored.versionId ?? compareVersionId);
+        setCompareText(workspaceText(restoredWorkspace));
+        setError("");
+      } catch (restoreError) {
+        setError(
+          restoreError instanceof Error
+            ? restoreError.message
+            : "Transcript version could not be restored."
+        );
+      }
+    });
+    saveQueueRef.current = restore;
+    await restore;
+  }, [canEdit, compareVersionId, noteId, session, stale]);
 
   const startAiEdit = useCallback(async () => {
     if (!canEdit || stale || loading || jobRunning) return;
@@ -683,6 +768,17 @@ export function TranscriptStudioView({
       <div className="mb-3 flex gap-2">
         <button
           type="button"
+          aria-expanded={historyOpen}
+          onClick={() => {
+            const opening = !historyOpen;
+            setHistoryOpen(opening);
+            if (opening && compareVersionId) void selectComparison(compareVersionId);
+          }}
+        >
+          {historyOpen ? "Hide version history" : "Version history"} · v{currentVersion}
+        </button>
+        <button
+          type="button"
           disabled={!canEdit || stale || sessionState.undoStack.length === 0}
           onClick={() => void restoreSessionState("undo")}
         >
@@ -708,6 +804,17 @@ export function TranscriptStudioView({
           </button>
         )}
       </div>
+      {historyOpen && (
+        <VersionHistory
+          versions={versions}
+          selectedVersionId={compareVersionId}
+          currentText={workspaceText(workspace)}
+          comparedText={compareText}
+          canRestore={canEdit && !stale && !error && !!compareVersionId && !jobRunning}
+          onSelect={(versionId) => void selectComparison(versionId)}
+          onRestore={() => void restoreSelectedVersion()}
+        />
+      )}
       {!!jobMessage && (
         <p role="alert" className="mb-3 text-sm">
           {jobMessage}

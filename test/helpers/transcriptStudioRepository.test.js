@@ -71,6 +71,67 @@ test("approved revisions never mutate notes.transcript and stale versions confli
   assert.equal(db.listTranscriptVersions(note.id).length, 2);
 });
 
+test("version snapshots are readable for comparison and compressed without losing restore targets", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+  const raw = "A".repeat(32_000);
+  const note = saveTranscriptNote(db, raw);
+  const first = db.applyTranscriptRevision({
+    noteId: note.id,
+    expectedVersion: 0,
+    sourceHash: hash(raw),
+    operations: [
+      { kind: "replaceText", segmentId: "source-0", before: raw, after: "B".repeat(32_000) },
+    ],
+    description: "Long transcript cleanup",
+  });
+  const stored = db.db
+    .prepare("SELECT operations_json FROM transcript_versions WHERE version = 1")
+    .get();
+  assert.match(stored.operations_json, /^deflate-raw-v1:/);
+  assert.ok(Buffer.byteLength(stored.operations_json) < 2_000);
+  const filename = db.db.name;
+  db.db.close();
+  db.db = new Database(filename);
+  db.setActiveAccountId("transcript-account");
+  assert.equal(
+    db.getTranscriptVersion(note.id, first.workspace.versionId).operations[0].after,
+    "B".repeat(32_000)
+  );
+
+  const second = db.applyTranscriptRevision({
+    noteId: note.id,
+    expectedVersion: 1,
+    sourceHash: hash(raw),
+    operations: [
+      {
+        kind: "replaceText",
+        segmentId: "source-0",
+        before: "B".repeat(32_000),
+        after: "C".repeat(32_000),
+      },
+    ],
+    description: "Second edit",
+  });
+  db.restoreTranscriptVersion(note.id, first.workspace.versionId, 2);
+  assert.equal(
+    db.getTranscriptVersion(note.id, first.workspace.versionId).operations[0].after,
+    "B".repeat(32_000)
+  );
+  assert.equal(
+    db.getTranscriptVersion(note.id, second.workspace.versionId).operations[1].after,
+    "C".repeat(32_000)
+  );
+  assert.deepEqual(
+    db.listTranscriptVersions(note.id).map(({ version }) => version),
+    [0, 1, 2, 3]
+  );
+  assert.throws(
+    () => db.getTranscriptVersion(note.id + 1, first.workspace.versionId),
+    /not found|inaccessible/i
+  );
+});
+
 test("a source hash change marks the existing approved overlay stale", (t) => {
   const db = createDb(t);
   if (!db) return;
