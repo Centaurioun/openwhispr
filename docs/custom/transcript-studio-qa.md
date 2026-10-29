@@ -44,6 +44,11 @@ npm run build:renderer
 PATH=/opt/homebrew/opt/node@24/bin:$PATH REQUIRE_DB_TESTS=1 npm test
 ```
 
+On macOS, `npm run test:swift641` runs that suite with Swift 6.4.1 selected only
+for the command through Swiftly. It does not change Swiftly's global default or
+Xcode selection. Use this when the `swiftc` at the front of `PATH` is not
+compatible with the selected Xcode SDK.
+
 Record each command's exit status, test totals, skipped/todo tests, and any native toolchain error. The native macOS audio snapshot test may require a compatible Swift/Xcode SDK; classify a reproducible local SDK mismatch separately from product failures. Hosted GitHub CI is `PENDING_QUOTA_RESET` while the documented Actions quota remains exhausted.
 
 ## Manual accessibility and behavior checks
