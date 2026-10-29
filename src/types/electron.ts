@@ -4,6 +4,36 @@ import type { PermissionGuideState, PermissionGuideAction } from "./permissionGu
 import type { TinfoilCatalogModel } from "../models/tinfoilModels";
 import type { UsageResponse } from "../lib/usageStore";
 import type { DictationTone, ToneAppCategory } from "../config/toneStyle";
+
+export interface TranscriptStudioWorkspace {
+  noteId: number;
+  sourceTranscript: string;
+  originalTranscript: string;
+  sourceHash: string;
+  baselineSourceHash: string;
+  currentVersion: number;
+  versionId: string | null;
+  approvedOperations: unknown[];
+  stale: boolean;
+}
+
+export interface TranscriptStudioVersionMeta {
+  versionId: string;
+  version: number;
+  description: string;
+  createdAt: string | null;
+}
+
+export interface ApplyTranscriptRevisionInput {
+  noteId: number;
+  expectedVersion: number;
+  sourceHash: string;
+  operations: unknown[];
+  description: string;
+}
+
+export type ApplyTranscriptRevisionResult =
+  { version: number; workspace: TranscriptStudioWorkspace } | { conflict: true };
 import type { OrgPolicy } from "./policy";
 import type { EnterpriseAudioSetupContext, EnterpriseAudioTestLink } from "./enterpriseAudio";
 import type { TechnicalErrorDetailsData } from "../components/ui/useToast";
@@ -1828,6 +1858,16 @@ declare global {
         transcript?: string | null
       ) => Promise<{ success: boolean; note?: NoteItem }>;
       getNote: (id: number) => Promise<NoteItem | null>;
+      getTranscriptWorkspace: (noteId: number) => Promise<TranscriptStudioWorkspace>;
+      applyTranscriptRevision: (
+        input: ApplyTranscriptRevisionInput
+      ) => Promise<ApplyTranscriptRevisionResult>;
+      listTranscriptVersions: (noteId: number) => Promise<TranscriptStudioVersionMeta[]>;
+      restoreTranscriptVersion: (
+        noteId: number,
+        versionId: string,
+        expectedVersion: number
+      ) => Promise<TranscriptStudioWorkspace>;
       getNotes: (
         noteType?: string | null,
         limit?: number,

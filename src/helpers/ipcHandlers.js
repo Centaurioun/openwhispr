@@ -2492,6 +2492,21 @@ class IPCHandlers {
       return this.databaseManager.getNote(id);
     });
 
+    ipcMain.handle("transcript-studio-get-workspace", (_event, noteId) =>
+      this.databaseManager.getTranscriptWorkspace(noteId)
+    );
+    ipcMain.handle("transcript-studio-apply-revision", (_event, input) =>
+      this.databaseManager.applyTranscriptRevision(input)
+    );
+    ipcMain.handle("transcript-studio-list-versions", (_event, noteId) =>
+      this.databaseManager.listTranscriptVersions(noteId)
+    );
+    ipcMain.handle(
+      "transcript-studio-restore-version",
+      (_event, noteId, versionId, expectedVersion) =>
+        this.databaseManager.restoreTranscriptVersion(noteId, versionId, expectedVersion)
+    );
+
     ipcMain.handle("db-get-notes", async (event, noteType, limit, folderId, spaceId, spaceIds) => {
       return this.databaseManager.getNotes(noteType, limit, folderId, spaceId, spaceIds);
     });
