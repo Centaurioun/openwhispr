@@ -32,4 +32,22 @@ No hosted GitHub check result was obtained during this task. The local full test
 
 ## Commit
 
-`b755b303` — `ci(fork): gate custom integration against regressions`.
+`299a7c0c` — `ci(fork): gate custom integration against regressions`.
+
+
+## Fix round (2026-10-29)
+
+Addressed the workflow review findings on top of `299a7c0c`:
+
+- PR events now target only `custom/main`; push events cover only `feature/**`. The parser test asserts both trigger arrays exactly, so an unbounded wildcard cannot silently broaden CI scope.
+- Dependency installation uses `npm ci --ignore-scripts`, followed by `npm rebuild better-sqlite3` for the Node 24 ABI. The `npm test` step sets `ELECTRON_OVERRIDE_DIST_PATH: /tmp` and `REQUIRE_DB_TESTS: '1'`, preventing an Electron-built addon or silently skipped database tests from producing a false green.
+- All Task 1/2 checker tests remain present.
+
+Fix-round verification:
+
+- `/opt/homebrew/opt/node@24/bin/node --test test/helpers/customUpstreamGate.test.js` — exit 0; 11 passed, 0 failed, 0 skipped, 0 todo.
+- `git diff --check` — exit 0; no whitespace errors.
+- The coordinating agent reported a separate completed strict Node 24 full-suite run after rebuilding `better-sqlite3` and correcting the SDKROOT/Xcode environment: 10,242 passed, 0 failed, 14 skipped, 1 todo. I did not rerun the full suite in this fix round to avoid overlapping that run.
+
+The earlier `npm test` result above was from the Node 26 local shell with an Electron ABI binding and was not representative of the workflow's Node 24 strict test setup. No hosted check result is claimed.
+

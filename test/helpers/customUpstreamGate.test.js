@@ -109,14 +109,11 @@ test('custom integration workflow runs the required regression checks', () => {
 test('custom integration checks fail closed and cover custom branches', () => {
   const workflow = readWorkflow();
   const pullRequest = workflow.on?.pull_request;
-  const branches = pullRequest?.branches || [];
+  const push = workflow.on?.push;
   const steps = Object.values(workflow.jobs).flatMap((job) => job.steps || []);
 
-  assert.ok(branches.includes('custom/main'), 'custom/main must be covered');
-  assert.ok(
-    branches.some((branch) => branch.includes('*') || branch === 'main'),
-    'feature branches must be covered'
-  );
+  assert.deepEqual(pullRequest?.branches, ['custom/main']);
+  assert.deepEqual(push?.branches, ['feature/**']);
   assert.ok(
     steps.every((step) => step['continue-on-error'] !== true),
     'required checks must not be allowed to fail'
@@ -126,8 +123,21 @@ test('custom integration checks fail closed and cover custom branches', () => {
     'workflow must set up Node'
   );
   assert.ok(
-    steps.some((step) => step.run?.includes('npm ci')),
-    'workflow must install from the lockfile'
+    steps.some((step) => step.run?.trim() === 'npm ci --ignore-scripts'),
+    'workflow must install locked dependencies without Electron lifecycle builds'
+  );
+  assert.ok(
+    steps.some((step) => step.run?.trim() === 'npm rebuild better-sqlite3'),
+    'workflow must rebuild better-sqlite3 for the Node runtime'
+  );
+  const testStep = steps.find((step) => step.run?.trim() === 'npm test');
+  assert.deepEqual(testStep?.env, {
+    ELECTRON_OVERRIDE_DIST_PATH: '/tmp',
+    REQUIRE_DB_TESTS: '1',
+  });
+  assert.ok(
+    !steps.some((step) => step.run?.trim() === 'npm ci'),
+    'plain npm ci must not build the database addon for Electron before tests'
   );
   assert.ok(
     !steps.some((step) => /\b(release|deploy|publish)\b/i.test(step.run || '')),
