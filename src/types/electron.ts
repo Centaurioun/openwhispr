@@ -1,6 +1,7 @@
 import type { ModelDefinition } from "../models/ModelRegistry";
 import type { ReasoningConfig } from "../services/BaseReasoningService";
 import type { PermissionGuideState, PermissionGuideAction } from "./permissionGuide";
+import type { EditOperation } from "../custom-features/transcript-studio/domain/editOperations";
 import type { TinfoilCatalogModel } from "../models/tinfoilModels";
 import type { UsageResponse } from "../lib/usageStore";
 import type { DictationTone, ToneAppCategory } from "../config/toneStyle";
@@ -28,7 +29,7 @@ export interface ApplyTranscriptRevisionInput {
   noteId: number;
   expectedVersion: number;
   sourceHash: string;
-  operations: unknown[];
+  operations: EditOperation[];
   description: string;
 }
 
