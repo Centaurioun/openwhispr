@@ -31,3 +31,12 @@
 - The passing tests and checklist assertions do not prove the manual source transcription, transcript editor, note summary, original/edited export, MCP read access, or sign-in regression smoke tests. Those remain required evidence for a human GO decision.
 - Task 4's disposable SQLite work does not certify real user profiles. No profile migration, live smoke testing, deployment, publication, or installation was performed.
 - Commit requested by the task brief: `docs(fork): define release and upstream acceptance gates`.
+
+## Semantic acceptance-test follow-up
+
+After review noted that keyword presence alone did not protect the decision semantics, the focused test was strengthened to require that GO means all eight gates checked, evidence attached, and explicit human reviewer sign-off for the exact candidate. It also requires NO-GO for incomplete, missing, ambiguous, or failed evidence and a specific blocker.
+
+- **Mutation RED:** saved the checklist, temporarily changed the GO rule from “only when all eight gates above are checked” to “when most gates above are checked,” and ran `/opt/homebrew/opt/node@24/bin/node --test test/helpers/customReleaseChecklist.test.js`. The test failed (0 pass, 1 fail) at the GO semantics assertion with `GO must require every gate, attached evidence, and human sign-off for the exact candidate`. The original checklist was restored from the saved copy.
+- **GREEN:** reran `/opt/homebrew/opt/node@24/bin/node --test test/helpers/customReleaseChecklist.test.js` after restoration — 1 test, 1 pass, 0 failures.
+- Checklist domain assertions: 11/11 passed. `git diff --check` passed.
+- No release checklist policy was changed in this follow-up. No full-suite rerun was needed; the earlier full-suite result above remains the recorded full-suite evidence.

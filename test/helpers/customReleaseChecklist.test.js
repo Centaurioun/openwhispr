@@ -23,4 +23,15 @@ test('custom release checklist names every GO and NO-GO gate', () => {
   ]) {
     assert.ok(checklist.toLowerCase().includes(gate.toLowerCase()), `missing release gate: ${gate}`);
   }
+
+  assert.match(
+    checklist,
+    /\*\*GO\*\* only when all eight gates above are checked, evidence is attached, and a human release reviewer records explicit sign-off for this exact candidate\./i,
+    'GO must require every gate, attached evidence, and human sign-off for the exact candidate',
+  );
+  assert.match(
+    checklist,
+    /\*\*NO-GO\*\* if any evidence is incomplete, missing, ambiguous, or failed\. Record the specific blocker/i,
+    'NO-GO must cover all incomplete-evidence states and require a specific blocker',
+  );
 });
