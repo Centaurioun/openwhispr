@@ -187,7 +187,7 @@ test("shared team-note members keep separate overlay workspaces and version hist
   assert.throws(() => db.getTranscriptWorkspace(saved.note.id), /not found|inaccessible/i);
 });
 
-test("account-less private notes use a stable local scope across account switches", (t) => {
+test("account-less private notes isolate active accounts and retain a no-account local scope", (t) => {
   const db = createDb(t);
   if (!db) return;
   const raw = "Local legacy transcript";
@@ -203,11 +203,48 @@ test("account-less private notes use a stable local scope across account switche
   });
 
   db.setActiveAccountId("second-account");
+  const secondAccountWorkspace = db.getTranscriptWorkspace(note.id);
+  assert.equal(secondAccountWorkspace.sourceTranscript, raw);
+  assert.equal(secondAccountWorkspace.currentVersion, 0);
+  assert.deepEqual(secondAccountWorkspace.approvedOperations, []);
+  const secondAccountEdit = db.applyTranscriptRevision({
+    noteId: note.id,
+    expectedVersion: 0,
+    sourceHash: hash(raw),
+    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Second account edit" }],
+    description: "Second account edit",
+  });
+
+  db.setActiveAccountId(null);
+  const localWorkspace = db.getTranscriptWorkspace(note.id);
+  assert.equal(localWorkspace.sourceTranscript, raw);
+  assert.equal(localWorkspace.currentVersion, 0);
+  const localEdit = db.applyTranscriptRevision({
+    noteId: note.id,
+    expectedVersion: 0,
+    sourceHash: hash(raw),
+    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Local edit" }],
+    description: "Local edit",
+  });
+
+  db.setActiveAccountId("first-account");
   assert.equal(db.getTranscriptWorkspace(note.id).versionId, result.workspace.versionId);
   assert.equal(db.getTranscriptWorkspace(note.id).approvedOperations[0].after, "Local edit");
+  db.setActiveAccountId("second-account");
+  assert.equal(db.getTranscriptWorkspace(note.id).versionId, secondAccountEdit.workspace.versionId);
+  assert.equal(
+    db.getTranscriptWorkspace(note.id).approvedOperations[0].after,
+    "Second account edit"
+  );
+  db.setActiveAccountId(null);
+  assert.equal(db.getTranscriptWorkspace(note.id).versionId, localEdit.workspace.versionId);
+  assert.equal(db.getTranscriptWorkspace(note.id).approvedOperations[0].after, "Local edit");
   assert.deepEqual(
-    db.db.prepare("SELECT scope_key FROM transcript_workspaces WHERE note_id = ?").get(note.id),
-    { scope_key: "local:default" }
+    db.db
+      .prepare("SELECT scope_key FROM transcript_workspaces WHERE note_id = ? ORDER BY scope_key")
+      .all(note.id)
+      .map(({ scope_key }) => scope_key),
+    ["account:first-account", "account:second-account", "local:default"]
   );
 });
 

@@ -4283,7 +4283,8 @@ class DatabaseManager {
       if (!this.activeAccountId) throw new Error("Transcript note not found or inaccessible");
       return `account:${this.activeAccountId}`;
     }
-    return note.account_id ? `account:${note.account_id}` : "local:default";
+    if (note.account_id) return `account:${note.account_id}`;
+    return this.activeAccountId ? `account:${this.activeAccountId}` : "local:default";
   }
 
   _transcriptStudioSourceHash(transcript) {
