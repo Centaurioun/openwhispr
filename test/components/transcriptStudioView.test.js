@@ -25,6 +25,7 @@ let React;
 let vite;
 let TranscriptStudioView;
 let normalizeTranscriptSource;
+let usePolicyStore;
 
 test.before(async (t) => {
   const { Window } = await import("happy-dom");
@@ -45,6 +46,7 @@ test.before(async (t) => {
   ({ normalizeTranscriptSource } = await vite.ssrLoadModule(
     "/custom-features/transcript-studio/domain/normalizeSource.ts"
   ));
+  ({ usePolicyStore } = await vite.ssrLoadModule("/stores/policyStore.ts"));
 });
 
 test.after(async () => {
@@ -167,6 +169,74 @@ test("AI editing is idle until its explicit button is clicked and asks before re
   assert.equal(consentRequests, 1);
   assert.equal(host.querySelector("textarea").value, "Keep this source unchanged");
   assert.equal(host.querySelector("[aria-label='Pending AI transcript proposals']"), null);
+});
+
+test("a late proposal from the old account cannot write into the new account draft key", async (t) => {
+  const raw = '[{"text":"Account scoped transcript"}]';
+  const normalized = await normalizeTranscriptSource(raw);
+  const workspace = {
+    noteId: 24,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const previousPolicy = usePolicyStore.getState();
+  const newAccountKey = `transcript-studio-proposals:acct-new:2:${normalized.sourceHash}`;
+  const previousStorage = happyWindow.sessionStorage.getItem(newAccountKey);
+  happyWindow.sessionStorage.removeItem(newAccountKey);
+  usePolicyStore.setState({ accountId: "acct-old", authGeneration: 1 });
+  happyWindow.sessionStorage.setItem(newAccountKey, "[]");
+
+  let releaseOldJob;
+  let started = false;
+  const pendingEvent = new Promise((resolve) => {
+    releaseOldJob = resolve;
+  });
+  const jobRunner = async function* () {
+    started = true;
+    yield await pendingEvent;
+  };
+  try {
+    const { host } = await mount(
+      t,
+      { noteId: 24, sourceTranscript: raw, canEdit: true, jobRunner },
+      apiFor(workspace)
+    );
+    const button = [...host.querySelectorAll("button")].find((candidate) =>
+      candidate.textContent.includes("Edit transcript with AI")
+    );
+    await React.act(async () =>
+      button.dispatchEvent(new happyWindow.MouseEvent("click", { bubbles: true }))
+    );
+    assert.equal(await waitFor(() => started), true, "the injected old-account job should start");
+
+    await React.act(async () => {
+      usePolicyStore.setState({ accountId: "acct-new", authGeneration: 2 });
+      releaseOldJob({
+        type: "chunkProposed",
+        chunk: { id: "old-chunk", index: 0, segments: [], inputTokens: 1, outputTokens: 1 },
+        candidate: { segments: [] },
+        validation: { safe: true, warnings: [], edits: [] },
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() => !host.textContent.includes("Cancel AI edit"));
+    await React.act(async () => {});
+    assert.equal(happyWindow.sessionStorage.getItem(newAccountKey), "[]");
+    assert.equal(host.querySelector('[data-proposal-chunk="old-chunk"]'), null);
+  } finally {
+    usePolicyStore.setState(previousPolicy);
+    if (previousStorage !== null) {
+      happyWindow.sessionStorage.setItem(newAccountKey, previousStorage);
+    } else {
+      happyWindow.sessionStorage.removeItem(newAccountKey);
+    }
+  }
 });
 
 test("the approved revision is shown by default and stale overlays fall back to raw", async (t) => {

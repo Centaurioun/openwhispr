@@ -43,6 +43,8 @@ interface TranscriptStudioViewProps {
     persistSource?: boolean
   ) => string | void | Promise<string | void>;
   onDismissSuggestion?: (speakerId: string, persistSource?: boolean) => void | Promise<void>;
+  /** Optional job runner seam for deterministic UI tests. */
+  jobRunner?: typeof startTranscriptEditJob;
 }
 
 const EMPTY_WORKSPACE: TranscriptEditWorkspace = { sourceHash: "", kind: "plain", segments: [] };
@@ -89,6 +91,7 @@ export function TranscriptStudioView({
   onMapSpeaker,
   onConfirmSuggestion,
   onDismissSuggestion,
+  jobRunner,
 }: TranscriptStudioViewProps) {
   const sessionRef = useRef<ReturnType<typeof createTranscriptStudioStore> | null>(null);
   if (!sessionRef.current) sessionRef.current = createTranscriptStudioStore(EMPTY_WORKSPACE);
@@ -111,12 +114,24 @@ export function TranscriptStudioView({
   const accountKey = usePolicyStore(
     (state) => `${state.accountId ?? "anonymous"}:${state.authGeneration ?? "none"}`
   );
-  const proposalKeyRef = useRef("");
+  const proposalContextRef = useRef({
+    accountKey,
+    noteId,
+    sourceTranscript,
+    sourceHash: "",
+    storageKey: "",
+  });
+  proposalContextRef.current = {
+    accountKey,
+    noteId,
+    sourceTranscript,
+    sourceHash: metadataRef.current.sourceHash,
+    storageKey: proposalDraftKey(accountKey, noteId, metadataRef.current.sourceHash),
+  };
 
-  useEffect(() => () => jobControllerRef.current?.abort(), [noteId, sourceTranscript]);
+  useEffect(() => () => jobControllerRef.current?.abort(), [accountKey, noteId, sourceTranscript]);
   useEffect(() => {
-    const key = proposalDraftKey(accountKey, noteId, metadataRef.current.sourceHash);
-    proposalKeyRef.current = key;
+    const key = proposalContextRef.current.storageKey;
     try {
       const saved = window.sessionStorage?.getItem(key);
       setProposals(saved ? JSON.parse(saved) : []);
@@ -453,10 +468,30 @@ export function TranscriptStudioView({
     jobControllerRef.current = controller;
     setJobRunning(true);
     setJobMessage("");
+    const jobContext = { ...proposalContextRef.current };
+    const isJobContextCurrent = () => {
+      const current = proposalContextRef.current;
+      const policy = usePolicyStore.getState();
+      const liveAccountKey = `${policy.accountId ?? "anonymous"}:${policy.authGeneration ?? "none"}`;
+      return (
+        liveAccountKey === jobContext.accountKey &&
+        current.accountKey === jobContext.accountKey &&
+        current.noteId === jobContext.noteId &&
+        current.sourceTranscript === jobContext.sourceTranscript &&
+        current.sourceHash === jobContext.sourceHash &&
+        current.storageKey === jobContext.storageKey
+      );
+    };
+    const removeJobDraft = () => {
+      try {
+        window.sessionStorage?.removeItem(jobContext.storageKey);
+      } catch {
+        /* ignore unavailable storage */
+      }
+    };
     const settings = getSettings();
-    proposalKeyRef.current = proposalDraftKey(accountKey, noteId, metadataRef.current.sourceHash);
     try {
-      const saved = window.sessionStorage?.getItem(proposalKeyRef.current);
+      const saved = window.sessionStorage?.getItem(jobContext.storageKey);
       if (saved) setProposals(JSON.parse(saved));
     } catch {
       setProposals([]);
@@ -470,20 +505,29 @@ export function TranscriptStudioView({
             ? "self-hosted"
             : settings.cleanupMode;
     try {
-      for await (const event of startTranscriptEditJob({
+      const runJob = jobRunner ?? startTranscriptEditJob;
+      for await (const event of runJob({
         noteId,
-        sourceHash: metadataRef.current.sourceHash,
+        sourceHash: jobContext.sourceHash,
         providerChoice,
         strictMode: true,
         selectedIds: selectedSegmentIds.size ? [...selectedSegmentIds] : undefined,
         signal: controller.signal,
         resumeFromChunk,
       })) {
+        if (!isJobContextCurrent()) {
+          removeJobDraft();
+          break;
+        }
         if (event.type === "chunkProposed") {
           setProposals((previous) => {
+            if (!isJobContextCurrent()) {
+              removeJobDraft();
+              return previous;
+            }
             const next = [...previous.filter((item) => item.chunk.id !== event.chunk.id), event];
             try {
-              window.sessionStorage?.setItem(proposalKeyRef.current, JSON.stringify(next));
+              window.sessionStorage?.setItem(jobContext.storageKey, JSON.stringify(next));
             } catch {
               /* proposals remain in this session */
             }
@@ -495,12 +539,8 @@ export function TranscriptStudioView({
         } else if (event.type === "warning") {
           setJobMessage(event.message);
           if (/account, note, or source changed/i.test(event.message)) {
-            setProposals([]);
-            try {
-              window.sessionStorage?.removeItem(proposalKeyRef.current);
-            } catch {
-              /* ignore unavailable storage */
-            }
+            removeJobDraft();
+            if (isJobContextCurrent()) setProposals([]);
           }
         } else if (event.type === "failed") {
           setResumeFromChunk(event.resumeFromChunk);
@@ -513,19 +553,12 @@ export function TranscriptStudioView({
     } catch (jobError) {
       setJobMessage(jobError instanceof Error ? jobError.message : "Transcript edit job failed.");
     } finally {
-      setJobRunning(false);
-      if (jobControllerRef.current === controller) jobControllerRef.current = null;
+      if (jobControllerRef.current === controller) {
+        setJobRunning(false);
+        jobControllerRef.current = null;
+      }
     }
-  }, [
-    accountKey,
-    canEdit,
-    jobRunning,
-    loading,
-    noteId,
-    resumeFromChunk,
-    selectedSegmentIds,
-    stale,
-  ]);
+  }, [canEdit, jobRunning, jobRunner, loading, noteId, resumeFromChunk, selectedSegmentIds, stale]);
 
   if (loading)
     return <div className="px-4 py-6 text-sm text-muted-foreground">Loading transcript…</div>;

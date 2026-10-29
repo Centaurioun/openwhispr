@@ -77,6 +77,54 @@ test("loading and uploading a transcript does not invoke reasoning; explicit job
   assert.ok(result.some((event) => event.type === "chunkProposed"));
 });
 
+test("a pre-aborted job exits before context capture, remote consent, or provider invocation", async () => {
+  const calls = [];
+  const runtime = mockRuntime({
+    captureContext: async () => {
+      calls.push("context");
+      return "acct-1";
+    },
+    confirmRemote: async () => {
+      calls.push("consent");
+      return true;
+    },
+    processChunk: async () => {
+      calls.push("provider");
+      return "{}";
+    },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const result = await events(
+    startTranscriptEditJob(input(runtime, { providerChoice: "openai", signal: controller.signal }))
+  );
+  assert.deepEqual(result, [{ type: "done", completed: 0, total: 0, cancelled: true }]);
+  assert.deepEqual(calls, []);
+});
+
+test("an abort during context validation is rechecked before provider invocation", async () => {
+  const controller = new AbortController();
+  let providerCalls = 0;
+  let contextChecks = 0;
+  const runtime = mockRuntime({
+    contextIsCurrent: async () => {
+      contextChecks += 1;
+      if (contextChecks === 2) controller.abort();
+      return true;
+    },
+    processChunk: async () => {
+      providerCalls += 1;
+      return "{}";
+    },
+  });
+  const result = await events(
+    startTranscriptEditJob(input(runtime, { signal: controller.signal }))
+  );
+  assert.equal(providerCalls, 0);
+  assert.equal(result.at(-1).type, "done");
+  assert.equal(result.at(-1).cancelled, true);
+});
+
 test("invalid output retries with a smaller output budget before proposing", async () => {
   const budgets = [];
   const runtime = mockRuntime({

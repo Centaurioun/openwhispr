@@ -202,13 +202,22 @@ function sourcePayload(chunk: TranscriptChunk): string {
 export async function* startTranscriptEditJob(
   input: StartTranscriptEditJobInput
 ): AsyncIterable<TranscriptEditEvent> {
+  if (input.signal?.aborted) {
+    yield { type: "done", completed: 0, total: 0, cancelled: true };
+    return;
+  }
   let runtime = input.runtime;
   const controller = new AbortController();
   const forwardAbort = () => controller.abort();
   input.signal?.addEventListener("abort", forwardAbort, { once: true });
+  if (input.signal?.aborted) controller.abort();
   let completed = 0;
   let chunks: TranscriptChunk[] = [];
   try {
+    if (controller.signal.aborted) {
+      yield { type: "done", completed: 0, total: 0, cancelled: true };
+      return;
+    }
     if (!input.providerChoice || !VALID_PROVIDER_CHOICES.has(input.providerChoice)) {
       yield {
         type: "failed",
@@ -219,9 +228,18 @@ export async function* startTranscriptEditJob(
       return;
     }
     runtime ??= await createDefaultRuntime();
+    if (controller.signal.aborted) {
+      yield { type: "done", completed: 0, total: 0, cancelled: true };
+      return;
+    }
     const capturedContext = await runtime.captureContext(input.noteId, input.sourceHash);
+    if (controller.signal.aborted) {
+      yield { type: "done", completed: 0, total: 0, cancelled: true };
+      return;
+    }
     if (
       input.providerChoice !== "local" &&
+      !controller.signal.aborted &&
       !(await (runtime
         ? runtime.confirmRemote(input.providerChoice)
         : Promise.resolve(
@@ -234,6 +252,10 @@ export async function* startTranscriptEditJob(
         type: "warning",
         message: "Remote transcript processing was not approved. No transcript text was sent.",
       };
+      yield { type: "done", completed: 0, total: 0, cancelled: true };
+      return;
+    }
+    if (controller.signal.aborted) {
       yield { type: "done", completed: 0, total: 0, cancelled: true };
       return;
     }
@@ -291,6 +313,10 @@ export async function* startTranscriptEditJob(
         yield { type: "done", completed, total: chunks.length, cancelled: true };
         return;
       }
+      if (controller.signal.aborted) {
+        yield { type: "done", completed, total: chunks.length, cancelled: true };
+        return;
+      }
       const chunk = chunks[index];
       try {
         const response = await runtime.processChunk(
@@ -309,6 +335,10 @@ export async function* startTranscriptEditJob(
             message: "The account, note, or source changed; the late proposal was discarded.",
             chunkIndex: index,
           };
+          yield { type: "done", completed, total: chunks.length, cancelled: true };
+          return;
+        }
+        if (controller.signal.aborted) {
           yield { type: "done", completed, total: chunks.length, cancelled: true };
           return;
         }
@@ -354,6 +384,10 @@ export async function* startTranscriptEditJob(
                 message: "The account, note, or source changed; the late proposal was discarded.",
                 chunkIndex: index,
               };
+              yield { type: "done", completed, total: chunks.length, cancelled: true };
+              return;
+            }
+            if (controller.signal.aborted) {
               yield { type: "done", completed, total: chunks.length, cancelled: true };
               return;
             }
