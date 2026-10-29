@@ -177,8 +177,12 @@ test("speaker suggestions are marked uncertain and require explicit confirmation
   };
   const priorConfirm = globalThis.window.confirm;
   const accepted = [];
+  const confirmations = [];
   let allow = false;
-  globalThis.window.confirm = () => allow;
+  globalThis.window.confirm = (message) => {
+    confirmations.push(message);
+    return allow;
+  };
   t.after(() => {
     globalThis.window.confirm = priorConfirm;
   });
@@ -191,6 +195,152 @@ test("speaker suggestions are marked uncertain and require explicit confirmation
   await React.act(async () => accept.click());
   assert.equal(accepted.length, 1);
   assert.equal(accepted[0][1][0].speakerLocked, true);
+});
+
+test("bulk acceptance confirms every uncertain speaker proposal before any are persisted", async (t) => {
+  const makeSpeakerProposal = (id, segmentId, speakerName) => ({
+    ...proposal(id, segmentId, "Current source", "Current source"),
+    uncertain: true,
+    validation: {
+      safe: true,
+      warnings: [],
+      edits: [{ kind: "setSpeaker", segmentId, speakerId: id, speakerName, speakerLocked: true }],
+    },
+  });
+  const pending = [
+    makeSpeakerProposal("speaker-one", "source-0", "Ada"),
+    makeSpeakerProposal("speaker-two", "source-1", "Lin"),
+  ];
+  const priorConfirm = globalThis.window.confirm;
+  const accepted = [];
+  const confirmations = [];
+  let allow = false;
+  globalThis.window.confirm = (message) => {
+    confirmations.push(message);
+    return allow;
+  };
+  t.after(() => {
+    globalThis.window.confirm = priorConfirm;
+  });
+  const host = await render(t, pending, { onAccept: async (...args) => accepted.push(args) });
+  const bulkAccept = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Accept all"
+  );
+
+  await React.act(async () => bulkAccept.click());
+  assert.deepEqual(accepted, [], "cancellation must leave all speaker proposals pending");
+  assert.ok(
+    confirmations[0].includes("2"),
+    "confirmation must state the number of speaker assignments covered"
+  );
+  assert.match(confirmations[0], /uncertain|speaker/i);
+  assert.ok(host.querySelector('[data-proposal-chunk="speaker-one"]'));
+  assert.ok(host.querySelector('[data-proposal-chunk="speaker-two"]'));
+
+  allow = true;
+  await React.act(async () => bulkAccept.click());
+  assert.deepEqual(accepted[0][0], ["speaker-one", "speaker-two"]);
+  assert.deepEqual(
+    accepted[0][1].map((operation) => operation.speakerLocked),
+    [true, true]
+  );
+});
+
+test("bulk confirmation counts every locked speaker operation inside one proposal", async (t) => {
+  const multiSpeaker = {
+    ...proposal("multi-speaker", "source-0", "Current source", "Current source"),
+    uncertain: true,
+    validation: {
+      safe: true,
+      warnings: [],
+      edits: [
+        {
+          kind: "setSpeaker",
+          segmentId: "source-0",
+          speakerId: "speaker-a",
+          speakerName: "Ada",
+          speakerLocked: true,
+        },
+        {
+          kind: "setSpeaker",
+          segmentId: "source-1",
+          speakerId: "speaker-b",
+          speakerName: "Lin",
+          speakerLocked: true,
+        },
+      ],
+    },
+  };
+  const priorConfirm = globalThis.window.confirm;
+  const accepted = [];
+  const confirmations = [];
+  globalThis.window.confirm = (message) => {
+    confirmations.push(message);
+    return false;
+  };
+  t.after(() => {
+    globalThis.window.confirm = priorConfirm;
+  });
+  const host = await render(t, [multiSpeaker], {
+    onAccept: async (...args) => accepted.push(args),
+  });
+  const bulkAccept = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Accept all"
+  );
+  await React.act(async () => bulkAccept.click());
+
+  assert.match(confirmations[0], /2 uncertain speaker assignments/);
+  assert.deepEqual(accepted, []);
+  assert.ok(host.querySelector('[data-proposal-chunk="multi-speaker"]'));
+});
+
+test("uncertain-only speaker proposals require confirmation individually and in bulk", async (t) => {
+  const uncertainOnly = {
+    ...proposal("uncertain-only", "source-0", "Current source", "Current source"),
+    uncertain: true,
+    validation: {
+      safe: true,
+      warnings: [],
+      edits: [
+        {
+          kind: "replaceText",
+          segmentId: "source-0",
+          before: "Current source",
+          after: "Reviewed source",
+        },
+      ],
+    },
+  };
+  const priorConfirm = globalThis.window.confirm;
+  const accepted = [];
+  const confirmations = [];
+  let allow = false;
+  globalThis.window.confirm = (message) => {
+    confirmations.push(message);
+    return allow;
+  };
+  t.after(() => {
+    globalThis.window.confirm = priorConfirm;
+  });
+  const host = await render(t, [uncertainOnly], {
+    onAccept: async (...args) => accepted.push(args),
+  });
+
+  await React.act(async () =>
+    host.querySelector('[aria-label="Accept proposal uncertain-only"]').click()
+  );
+  assert.deepEqual(accepted, []);
+  assert.match(confirmations[0], /uncertain speaker suggestion/);
+  assert.doesNotMatch(confirmations[0], /will lock|assignments/);
+  assert.ok(host.querySelector('[data-proposal-chunk="uncertain-only"]'));
+  await React.act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((button) => button.textContent === "Accept all")
+      .click()
+  );
+  assert.deepEqual(accepted, []);
+  assert.equal(confirmations.length, 2);
+  assert.ok(host.querySelector('[data-proposal-chunk="uncertain-only"]'));
 });
 
 test("pending proposals stay visible during the next chunk and failed approval rolls back", async (t) => {

@@ -42,6 +42,24 @@ export function ProposalReview({
 
   const accept = async (selected: PendingTranscriptProposal[]) => {
     if (!canEdit || selected.some(isStale)) return;
+    const speakerAssignmentCount = selected.reduce(
+      (count, proposal) =>
+        count + proposal.validation.edits.filter((edit) => edit.kind === "setSpeaker").length,
+      0
+    );
+    const uncertainProposalCount = selected.filter(
+      (proposal) =>
+        proposal.uncertain === true ||
+        proposal.validation.edits.some((edit) => edit.kind === "setSpeaker")
+    ).length;
+    if (uncertainProposalCount > 0) {
+      const confirm = typeof window !== "undefined" ? window.confirm : undefined;
+      const message =
+        speakerAssignmentCount > 0
+          ? `Confirm ${speakerAssignmentCount} uncertain speaker assignment${speakerAssignmentCount === 1 ? "" : "s"}? Accepting will lock these speaker assignments.`
+          : `Confirm ${uncertainProposalCount} uncertain speaker suggestion${uncertainProposalCount === 1 ? "" : "s"}? This batch has no speaker assignment operations to lock.`;
+      if (!confirm?.(message)) return;
+    }
     const operations = selected.flatMap(operationsFor);
     if (operations.length)
       await onAccept(
@@ -158,17 +176,7 @@ export function ProposalReview({
                     type="button"
                     disabled={proposal.validation.edits.length === 0}
                     aria-label={`Accept proposal ${proposal.chunk.id}`}
-                    onClick={() => {
-                      if (speaker) {
-                        const confirmed =
-                          typeof window !== "undefined" &&
-                          window.confirm(
-                            "Confirm this uncertain speaker suggestion? This will lock the speaker assignment."
-                          );
-                        if (!confirmed) return;
-                      }
-                      void accept([proposal]);
-                    }}
+                    onClick={() => void accept([proposal])}
                   >
                     {speaker ? "Confirm speaker explicitly" : "Accept"}
                   </button>

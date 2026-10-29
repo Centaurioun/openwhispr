@@ -107,11 +107,11 @@
 
 **Interfaces:** `planTranscriptChunks(segments:SourceSegment[], maxInputTokens:number): TranscriptChunk[]`; `startTranscriptEditJob(input:{noteId:number; sourceHash:string; providerChoice:string; strictMode:true; selectedIds?:string[]}): AsyncIterable<TranscriptEditEvent>` with `{type:'chunkProposed'|'progress'|'warning'|'failed'|'done'; ...}` event variants; `validateTranscriptProposal(source:TranscriptChunk, candidate:ProposedChunk): {safe:boolean; warnings:string[]; edits:EditOperation[]}`.
 
-- [ ] **Step 1:** Add failing tests: no invocation on upload; explicit click starts; one-hour text yields ordered chunks; missing/duplicated source blocks, altered numbers/names and truncated output get warnings/not automatic approval; cancellation leaves approved text untouched; late response after note/account change is discarded; error resumes from remaining chunk.
-- [ ] **Step 2:** Run tests and confirm failures.
-- [ ] **Step 3:** Use existing `ReasoningService` route (not `actionProcessingStore` summary reducer) to request conservative, meaning-preserving edits, per chunk; schedule sequentially by default with small context overlap, map proposed changes back to stable IDs, and persist pending drafts separately from accepted revisions.
-- [ ] **Step 4:** Run targeted tests; verify output budget fallback, back-pressure, offline/local provider, invalid provider and consent-gated remote provider.
-- [ ] **Step 5:** Commit `feat(transcript): add progressive validated edit proposals`.
+- [x] **Step 1:** Add failing tests: no invocation on upload; explicit click starts; one-hour text yields ordered chunks; missing/duplicated source blocks, altered numbers/names and truncated output get warnings/not automatic approval; cancellation leaves approved text untouched; late response after note/account change is discarded; error resumes from remaining chunk.
+- [x] **Step 2:** Run tests and confirm failures.
+- [x] **Step 3:** Use existing `ReasoningService` route (not `actionProcessingStore` summary reducer) to request conservative, meaning-preserving edits, per chunk; schedule sequentially by default with small context overlap, map proposed changes back to stable IDs, and persist pending drafts separately from accepted revisions.
+- [x] **Step 4:** Run targeted tests; verify output budget fallback, back-pressure, offline/local provider, invalid provider and consent-gated remote provider.
+- [x] **Step 5:** Commit `feat(transcript): add progressive validated edit proposals`.
 
 ### Task 6: Review, Bulk Accept/Reject and Speaker Suggestions
 
@@ -119,11 +119,11 @@
 
 **Interfaces:** `acceptProposal(proposalId:string, expectedVersion:number):Promise<void>`; `rejectProposal(proposalId:string):void`; `acceptProposals(ids:string[], expectedVersion:number):Promise<void>`; AI speaker suggestions carry `uncertain:true` and can never auto-apply.
 
-- [ ] **Step 1:** Write failing tests: accept one and all; reject one and all; pending suggestions visible while next chunk runs; conflict after user manual edit blocks stale proposal and allows re-review; locked speaker suggestions require confirmation.
-- [ ] **Step 2:** Confirm red tests.
-- [ ] **Step 3:** Show per-change diff with type filters; separate speaker proposals from punctuation changes; map each accepted proposal to atomic edit-transaction with Undo/Redo support.
-- [ ] **Step 4:** Run targeted tests, typecheck and keyboard accessibility checks.
-- [ ] **Step 5:** Commit `feat(transcript): review individual and bulk AI corrections`.
+- [x] **Step 1:** Write failing tests: accept one and all; reject one and all; pending suggestions visible while next chunk runs; conflict after user manual edit blocks stale proposal and allows re-review; locked speaker suggestions require confirmation.
+- [x] **Step 2:** Confirm red tests.
+- [x] **Step 3:** Show per-change diff with type filters; separate speaker proposals from punctuation changes; map each accepted proposal to atomic edit-transaction with Undo/Redo support.
+- [x] **Step 4:** Run targeted tests, typecheck and keyboard accessibility checks.
+- [x] **Step 5:** Commit `feat(transcript): review individual and bulk AI corrections`.
 
 ### Task 7: Durable Version History and Restore
 
