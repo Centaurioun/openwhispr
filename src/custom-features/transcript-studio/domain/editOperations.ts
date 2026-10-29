@@ -2,7 +2,15 @@ import type { NormalizedTranscriptSource, SourceSegment } from "./types";
 
 export type EditOperation =
   | { kind: "replaceText"; segmentId: string; before: string; after: string }
-  | { kind: "setSpeaker"; segmentId: string; speakerId: string | null; speakerName: string | null }
+  | {
+      kind: "setSpeaker";
+      segmentId: string;
+      speakerId: string | null;
+      speakerName: string | null;
+      speakerLocked?: boolean;
+      suggestedName?: string | null;
+      suggestedProfileId?: number | null;
+    }
   | { kind: "split"; segmentId: string; atOffset: number; newId: string }
   | { kind: "merge"; leftId: string; rightId: string };
 
@@ -77,6 +85,13 @@ function applyOne(
         ...segment,
         speakerId: operation.speakerId,
         speakerName: operation.speakerName,
+        speakerLocked: operation.speakerLocked ?? segment.speakerLocked,
+        ...(operation.suggestedName !== undefined
+          ? { suggestedName: operation.suggestedName }
+          : {}),
+        ...(operation.suggestedProfileId !== undefined
+          ? { suggestedProfileId: operation.suggestedProfileId }
+          : {}),
       };
       return next;
     }
@@ -118,11 +133,7 @@ function applyOne(
         left.speakerName !== null ||
         right.speakerId !== null ||
         right.speakerName !== null;
-      if (
-        actor === "ai" &&
-        !speakerMatches &&
-        (hasSpeakerAssignment || left.speakerLocked || right.speakerLocked)
-      ) {
+      if (!speakerMatches && (hasSpeakerAssignment || left.speakerLocked || right.speakerLocked)) {
         throw new Error("Transcript merge would change or discard a speaker assignment");
       }
       const merged: SourceSegment = {

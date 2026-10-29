@@ -83,6 +83,13 @@ export async function normalizeTranscriptSource(raw: string): Promise<Normalized
           : typeof segment.recorderName === "string"
             ? segment.recorderName
             : null,
+      ...(typeof segment.suggestedName === "string"
+        ? { suggestedName: segment.suggestedName }
+        : {}),
+      ...(typeof segment.suggestedProfileId === "number"
+        ? { suggestedProfileId: segment.suggestedProfileId }
+        : {}),
+      ...(typeof segment.recorderName === "string" ? { recorderName: segment.recorderName } : {}),
       startSeconds: seconds(segment.timestamp),
       endSeconds: seconds(segment.endTimestamp),
       speakerLocked: isTranscriptSpeakerLocked(lockable),

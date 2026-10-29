@@ -44,6 +44,7 @@ import { NoteSharingService } from "../../services/NoteSharingService";
 import { fetchSpaceRoster, useSpaceRoster } from "../../hooks/useSpaceRoster";
 import { useAuth } from "../../hooks/useAuth";
 import { RichTextEditor } from "../ui/RichTextEditor";
+import { TranscriptStudioView } from "../../custom-features/transcript-studio/components/TranscriptStudioView";
 import type { Editor } from "@tiptap/react";
 import { MeetingTranscriptChat, SelectionBar } from "./MeetingTranscriptChat";
 import {
@@ -704,7 +705,8 @@ export default function NoteEditor({
       email?: string | null,
       profileId?: number | null,
       recorderName?: string,
-      profileName = displayName
+      profileName = displayName,
+      persistSource = true
     ) => {
       const segments = isRecording ? useMeetingRecordingStore.getState().segments : displaySegments;
       const hasOtherRecorders = segments.some((segment) => segment.recorderName);
@@ -731,7 +733,12 @@ export default function NoteEditor({
       if (isRecording) {
         onLiveSpeakerLock?.(speakerId, displayName, recorderName);
         refreshSpeakerProfiles();
-        return;
+        return displayName;
+      }
+
+      if (!persistSource) {
+        refreshSpeakerProfiles();
+        return displayName;
       }
 
       const currentSegments = displaySegments.map((s) =>
@@ -748,6 +755,7 @@ export default function NoteEditor({
       await persistDisplaySegments(currentSegments, !!diarizedSegments || !isRecording);
 
       refreshSpeakerProfiles();
+      return displayName;
     },
     [
       diarizedSegments,
@@ -764,11 +772,25 @@ export default function NoteEditor({
   );
 
   const handleConfirmSuggestion = useCallback(
-    async (speakerId: string, suggestedName: string, profileId: number, recorderName?: string) => {
+    async (
+      speakerId: string,
+      suggestedName: string,
+      profileId: number,
+      recorderName?: string,
+      persistSource = true
+    ) => {
       const displayName = isYouSpeakerName(suggestedName, t("notes.speaker.you"))
         ? recorderName || recorderLabel
         : suggestedName;
-      await handleMapSpeaker(speakerId, displayName, null, profileId, recorderName, suggestedName);
+      return handleMapSpeaker(
+        speakerId,
+        displayName,
+        null,
+        profileId,
+        recorderName,
+        suggestedName,
+        persistSource
+      );
     },
     [handleMapSpeaker, recorderLabel, t]
   );
@@ -784,7 +806,8 @@ export default function NoteEditor({
   );
 
   const handleDismissSuggestion = useCallback(
-    async (speakerId: string) => {
+    async (speakerId: string, persistSource = true) => {
+      if (!persistSource) return;
       const currentSegments = displaySegments.map((s) =>
         s.speaker === speakerId
           ? applyTranscriptSpeakerPatch(s, {
@@ -1058,7 +1081,7 @@ export default function NoteEditor({
   }, []);
 
   const exportOptions = useMemo<NoteExportOption[]>(() => {
-    if (viewMode === "transcript" && onExportTranscript) {
+    if (viewMode === "transcript" && !hasMeetingTranscript && onExportTranscript) {
       return (["txt", "srt", "md", "json"] as const).map((format) => ({
         id: format,
         label: t(TRANSCRIPT_EXPORT_LABEL_KEYS[format]),
@@ -1071,7 +1094,7 @@ export default function NoteEditor({
       label: t(NOTE_EXPORT_LABEL_KEYS[format]),
       onSelect: () => onExportNote(format),
     }));
-  }, [viewMode, onExportTranscript, onExportNote, t]);
+  }, [hasMeetingTranscript, viewMode, onExportTranscript, onExportNote, t]);
 
   return (
     <div className="flex h-full min-h-0">
@@ -1444,51 +1467,38 @@ export default function NoteEditor({
 
         <div className="flex-1 relative min-h-0">
           <div ref={contentScrollRef} className="h-full overflow-y-auto">
-            {viewMode === "transcript" && (hasChatSegments || isRecording) ? (
-              isRecording ? (
-                <LiveMeetingTranscriptChat
-                  recorderLabel={recorderLabel}
-                  contentClassName={PAGE_CONTENT_WIDTH_CLASS}
-                  speakerMappings={speakerMappings}
-                  speakerProfiles={speakerProfiles}
-                  participants={parsedParticipants}
-                  isDiarizing={isDiarizing}
-                  sessionDiarizationEnabled={sessionDiarizationEnabled}
-                  sessionExpectedCount={sessionExpectedCount}
-                  userTouchedStepper={userTouchedStepper}
-                  onSetSessionDiarizationEnabled={onSetSessionDiarizationEnabled}
-                  onSetSessionExpectedCount={onSetSessionExpectedCount}
-                  onMapSpeaker={handleMapSpeaker}
-                  onConfirmSuggestion={handleConfirmSuggestion}
-                  onDismissSuggestion={handleDismissSuggestion}
-                  onAttachSpeakerEmail={handleAttachSpeakerEmail}
-                />
-              ) : (
-                <MeetingTranscriptChat
-                  contentClassName={PAGE_CONTENT_WIDTH_CLASS}
-                  recorderLabel={recorderLabel}
-                  segments={displaySegments}
-                  speakerMappings={speakerMappings}
-                  speakerProfiles={knownSpeakers}
-                  participants={parsedParticipants}
-                  isDiarizing={isDiarizing}
-                  sessionDiarizationEnabled={sessionDiarizationEnabled}
-                  sessionExpectedCount={sessionExpectedCount}
-                  userTouchedStepper={userTouchedStepper}
-                  onSetSessionDiarizationEnabled={onSetSessionDiarizationEnabled}
-                  onSetSessionExpectedCount={onSetSessionExpectedCount}
-                  onMapSpeaker={handleMapSpeaker}
-                  onConfirmSuggestion={handleConfirmSuggestion}
-                  onDismissSuggestion={handleDismissSuggestion}
-                  onAttachSpeakerEmail={handleAttachSpeakerEmail}
-                  selectedSegmentIds={selectedSegmentIds}
-                  onToggleSelect={handleToggleSelect}
-                />
-              )
+            {viewMode === "transcript" && isRecording ? (
+              <LiveMeetingTranscriptChat
+                recorderLabel={recorderLabel}
+                contentClassName={PAGE_CONTENT_WIDTH_CLASS}
+                speakerMappings={speakerMappings}
+                speakerProfiles={speakerProfiles}
+                participants={parsedParticipants}
+                isDiarizing={isDiarizing}
+                sessionDiarizationEnabled={sessionDiarizationEnabled}
+                sessionExpectedCount={sessionExpectedCount}
+                userTouchedStepper={userTouchedStepper}
+                onSetSessionDiarizationEnabled={onSetSessionDiarizationEnabled}
+                onSetSessionExpectedCount={onSetSessionExpectedCount}
+                onMapSpeaker={handleMapSpeaker}
+                onConfirmSuggestion={handleConfirmSuggestion}
+                onDismissSuggestion={handleDismissSuggestion}
+                onAttachSpeakerEmail={handleAttachSpeakerEmail}
+              />
             ) : viewMode === "transcript" && hasMeetingTranscript ? (
-              // Each tab keys its own editor, so undo never crosses tabs: an
-              // undo step from one tab would replay over the other and save it.
-              <RichTextEditor key="transcript" value={note.transcript || ""} disabled />
+              <TranscriptStudioView
+                key={`transcript-${note.id}`}
+                noteId={note.id}
+                sourceTranscript={note.transcript || ""}
+                canEdit={canEditNote}
+                selectedSegmentIds={selectedSegmentIds}
+                onToggleSelect={handleToggleSelect}
+                speakerMappings={speakerMappings}
+                recorderLabel={recorderLabel}
+                onMapSpeaker={handleMapSpeaker}
+                onConfirmSuggestion={handleConfirmSuggestion}
+                onDismissSuggestion={handleDismissSuggestion}
+              />
             ) : viewMode === "transcript" ? (
               <div
                 className={cn(
@@ -1550,21 +1560,23 @@ export default function NoteEditor({
               background: "linear-gradient(to bottom, transparent, var(--color-background))",
             }}
           />
-          {!isRecording && selectedSegmentIds.size > 0 && (
-            <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-              <SelectionBar
-                onClear={handleClearSelection}
-                speakerProfiles={knownSpeakers}
-                participants={parsedParticipants}
-                onAssignName={handleBulkAssignName}
-                selectedSegments={displaySegments.filter((segment) =>
-                  selectedSegmentIds.has(segment.id)
-                )}
-                speakerMappings={speakerMappings}
-                t={t}
-              />
-            </div>
-          )}
+          {!isRecording &&
+            selectedSegmentIds.size > 0 &&
+            !(viewMode === "transcript" && hasMeetingTranscript) && (
+              <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+                <SelectionBar
+                  onClear={handleClearSelection}
+                  speakerProfiles={knownSpeakers}
+                  participants={parsedParticipants}
+                  onAssignName={handleBulkAssignName}
+                  selectedSegments={displaySegments.filter((segment) =>
+                    selectedSegmentIds.has(segment.id)
+                  )}
+                  speakerMappings={speakerMappings}
+                  t={t}
+                />
+              </div>
+            )}
           <NoteBottomBar
             isRecording={isRecording}
             draftText={chatDraft}

@@ -7,6 +7,9 @@ export interface SourceSegment {
   endSeconds: number | null;
   speakerLocked: boolean;
   sourceIndex: number;
+  suggestedName?: string | null;
+  suggestedProfileId?: number | null;
+  recorderName?: string | null;
 }
 
 export interface NormalizedTranscriptSource {

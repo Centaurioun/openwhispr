@@ -95,11 +95,11 @@
 
 **Interfaces:** `<TranscriptStudioView noteId={number} sourceTranscript={string} canEdit={boolean} onExport={...} />`; each block uses controlled text with speaker label, optional timestamp, select/merge/split actions and Undo/Redo. Return a read-only fallback when edit permission is false.
 
-- [ ] **Step 1:** Write failing component tests: raw shown when no overlay; approved text shown by default; rename speaker and edit selected text; stable focus during updates; never render invented timestamp; read-only notes cannot be edited.
-- [ ] **Step 2:** Run component test and verify failures.
-- [ ] **Step 3:** Integrate transcript-specialized Tiptap/ProseMirror editing in existing note tab; reuse existing speaker mapping/selection UI and `RichTextEditor` patterns. Ensure controlled updates do not inadvertently reset Ctrl+Z history; group programmatic accepted edits atomically.
-- [ ] **Step 4:** Run UI tests, typecheck, and existing `test/components/meetingTranscriptChat.test.js`.
-- [ ] **Step 5:** Commit `feat(transcript): provide editable speaker-oriented transcript tab`.
+- [x] **Step 1:** Write failing component tests: raw shown when no overlay; approved text shown by default; rename speaker and edit selected text; stable focus during updates; never render invented timestamp; read-only notes cannot be edited.
+- [x] **Step 2:** Run component test and verify failures.
+- [x] **Step 3:** Integrate transcript-specialized Tiptap/ProseMirror editing in existing note tab; reuse existing speaker mapping/selection UI and `RichTextEditor` patterns. Ensure controlled updates do not inadvertently reset Ctrl+Z history; group programmatic accepted edits atomically.
+- [x] **Step 4:** Run UI tests, typecheck, and existing `test/components/meetingTranscriptChat.test.js`.
+- [x] **Step 5:** Commit `feat(transcript): provide editable speaker-oriented transcript tab`.
 
 ### Task 5: User-Triggered Progressive AI Edit Job
 

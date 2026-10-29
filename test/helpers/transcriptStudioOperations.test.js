@@ -134,10 +134,41 @@ test("AI cannot merge distinct confirmed speakers into an unnamed segment", () =
   const operation = [{ kind: "merge", leftId: "a", rightId: "b" }];
 
   assert.throws(() => applyEditOperations(initial, operation, { actor: "ai" }), /speaker/i);
-  const userMerge = applyEditOperations(initial, operation, { actor: "user" });
-  assert.equal(userMerge.segments[0].text, "FirstSecond");
-  assert.equal(userMerge.segments[0].speakerId, null);
-  assert.equal(userMerge.segments[0].speakerName, null);
+  assert.throws(
+    () => applyEditOperations(initial, operation, { actor: "user" }),
+    /speaker/i,
+    "manual merge must not silently erase two assigned speaker identities"
+  );
+});
+
+test("merge preserves a matching locked speaker assignment and rejects lock identity loss", () => {
+  const matching = workspace([
+    segment("a", "First", 0, { speakerId: "speaker-1", speakerName: "Ada" }),
+    segment("b", "Second", 1, {
+      speakerId: "speaker-1",
+      speakerName: "Ada",
+      speakerLocked: true,
+    }),
+  ]);
+  const merged = applyEditOperations(matching, [{ kind: "merge", leftId: "a", rightId: "b" }]);
+  assert.deepEqual(
+    {
+      text: merged.segments[0].text,
+      speakerId: merged.segments[0].speakerId,
+      speakerName: merged.segments[0].speakerName,
+      speakerLocked: merged.segments[0].speakerLocked,
+    },
+    { text: "FirstSecond", speakerId: "speaker-1", speakerName: "Ada", speakerLocked: true }
+  );
+
+  const lockedMismatch = workspace([
+    segment("a", "First", 0, { speakerId: "speaker-1", speakerName: "Ada", speakerLocked: true }),
+    segment("b", "Second", 1, { speakerId: "speaker-2", speakerName: "Lin" }),
+  ]);
+  assert.throws(
+    () => applyEditOperations(lockedMismatch, [{ kind: "merge", leftId: "a", rightId: "b" }]),
+    /speaker/i
+  );
 });
 
 test("one accepted bulk edit is one undo unit and redo reapplies it", () => {
