@@ -38,10 +38,10 @@ export function validateIntegrationState(input) {
   if (!input.upstreamRemote || !APPROVED_UPSTREAM.has(input.upstreamRemote.trim())) {
     reasons.push('Expected OpenWhispr upstream remote is missing or mismatched.');
   }
-  if (input.currentBranch === 'main' && input.ahead > 0) {
+  if (input.ahead > 0) {
     reasons.push('Baseline main is ahead of upstream; review divergence before updating.');
   }
-  if (input.currentBranch === 'main' && input.behind > 0) {
+  if (input.behind > 0) {
     reasons.push('Baseline main is behind upstream; use a reviewed integration, not automatic update.');
   }
   return { ok: reasons.length === 0, reasons };

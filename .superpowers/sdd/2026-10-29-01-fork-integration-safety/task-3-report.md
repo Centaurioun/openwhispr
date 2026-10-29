@@ -50,4 +50,3 @@ Fix-round verification:
 - The coordinating agent reported a separate completed strict Node 24 full-suite run after rebuilding `better-sqlite3` and correcting the SDKROOT/Xcode environment: 10,242 passed, 0 failed, 14 skipped, 1 todo. I did not rerun the full suite in this fix round to avoid overlapping that run.
 
 The earlier `npm test` result above was from the Node 26 local shell with an Electron ABI binding and was not representative of the workflow's Node 24 strict test setup. No hosted check result is claimed.
-

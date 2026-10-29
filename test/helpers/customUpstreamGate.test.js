@@ -64,6 +64,25 @@ test('baseline behind upstream requires reviewed update', async () => {
   assert.match(result.reasons.join(' '), /behind/i);
 });
 
+test('baseline ahead of upstream blocks a clean feature branch', async () => {
+  const { validateIntegrationState } = await checker();
+  const result = validateIntegrationState({ ...clean, ahead: 1 });
+  assert.equal(result.ok, false);
+  assert.match(result.reasons.join(' '), /baseline main is ahead/i);
+});
+
+test('baseline behind upstream blocks a clean custom/main branch', async () => {
+  const { validateIntegrationState } = await checker();
+  const result = validateIntegrationState({ ...clean, currentBranch: 'custom/main', behind: 2 });
+  assert.equal(result.ok, false);
+  assert.match(result.reasons.join(' '), /baseline main is behind/i);
+});
+
+test('clean custom/main state passes when baseline counts are zero', async () => {
+  const { validateIntegrationState } = await checker();
+  assert.deepEqual(validateIntegrationState({ ...clean, currentBranch: 'custom/main' }), { ok: true, reasons: [] });
+});
+
 test('dirty custom/main blocks integration', async () => {
   const { validateIntegrationState } = await checker();
   const result = validateIntegrationState({ ...clean, currentBranch: 'custom/main', dirty: true, mergeBase: 'abc123' });
