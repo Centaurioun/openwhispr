@@ -14,7 +14,7 @@ const APPROVED_UPSTREAM = new Set([
 ]);
 
 /**
- * @param {{currentBranch:string, dirty:boolean, ahead:number, behind:number, upstreamRemote:string|null}} input
+ * @param {{currentBranch:string, dirty:boolean, ahead:number, behind:number, mergeBase:string|null, upstreamRemote:string|null}} input
  * @returns {{ok:boolean, reasons:string[]}}
  */
 export function validateIntegrationState(input) {
@@ -29,6 +29,12 @@ export function validateIntegrationState(input) {
     return { ok: false, reasons };
   }
   if (input.dirty) reasons.push('Uncommitted or untracked changes must be reviewed first.');
+  if (input.currentBranch === 'custom/main' && input.dirty) {
+    reasons.push('custom/main must be clean before integration review.');
+  }
+  if (typeof input.mergeBase !== 'string' || !input.mergeBase.trim()) {
+    reasons.push('A merge base between baseline main and upstream/main is unavailable; integration is blocked.');
+  }
   if (!input.upstreamRemote || !APPROVED_UPSTREAM.has(input.upstreamRemote.trim())) {
     reasons.push('Expected OpenWhispr upstream remote is missing or mismatched.');
   }
@@ -64,7 +70,12 @@ export function inspectIntegrationState() {
       .split(/\s+/).map(Number);
     if (counts.length === 2) [ahead, behind] = counts;
   } catch { /* A missing or stale ref fails closed. */ }
-  return { currentBranch, dirty, ahead, behind, upstreamRemote };
+  let mergeBase = null;
+  try {
+    // Both refs must already exist. This check is read-only and never fetches.
+    mergeBase = git('merge-base', 'main', 'refs/remotes/upstream/main');
+  } catch { /* Missing refs or unrelated histories fail closed. */ }
+  return { currentBranch, dirty, ahead, behind, mergeBase, upstreamRemote };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

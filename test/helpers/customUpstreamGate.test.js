@@ -10,6 +10,7 @@ const clean = Object.freeze({
   dirty: false,
   ahead: 0,
   behind: 0,
+  mergeBase: 'abc123',
   upstreamRemote: 'https://github.com/OpenWhispr/openwhispr.git',
 });
 
@@ -51,6 +52,20 @@ test('baseline behind upstream requires reviewed update', async () => {
   const result = validateIntegrationState({ ...clean, currentBranch: 'main', behind: 2 });
   assert.equal(result.ok, false);
   assert.match(result.reasons.join(' '), /behind/i);
+});
+
+test('dirty custom/main blocks integration', async () => {
+  const { validateIntegrationState } = await checker();
+  const result = validateIntegrationState({ ...clean, currentBranch: 'custom/main', dirty: true, mergeBase: 'abc123' });
+  assert.equal(result.ok, false);
+  assert.match(result.reasons.join(' '), /uncommitted/i);
+});
+
+test('missing merge base fails closed', async () => {
+  const { validateIntegrationState } = await checker();
+  const result = validateIntegrationState({ ...clean, mergeBase: null });
+  assert.equal(result.ok, false);
+  assert.match(result.reasons.join(' '), /merge.base/i);
 });
 
 test('invalid Git state fails closed', async () => {

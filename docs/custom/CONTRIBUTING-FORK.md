@@ -33,6 +33,18 @@ If the `upstream` remote is absent, obtain approval for any needed local configu
 
 ## Integrations and release guardrails
 
+### Upstream integration procedure
+
+Use the reviewed path `upstream/main → clean baseline main → PR to custom/main`:
+
+1. Inspect `git status --porcelain=v1`, `git branch -vv`, and `git remote -v`; confirm the checkout and remotes before changing refs. Preserve existing local commits and back up any valuable work.
+2. Fetch explicitly with `git fetch --prune upstream`. Review what the fetch will update and confirm `upstream/main` resolves to the verified official repository.
+3. Confirm baseline `main` is clean and establish `git merge-base main upstream/main`. A missing merge base or dirty tree blocks integration; stop and investigate rather than guessing.
+4. Create or use a disposable isolated worktree from the clean baseline `main`. In that worktree, integrate with `git merge --no-ff upstream/main` so the integration remains reviewable. Resolve conflicts manually, inspect every resolution, and run required checks. Do not use automatic conflict resolution.
+5. Push the reviewed integration to a feature branch and open a PR targeting `custom/main`. Require green checks and explicit human approval before the PR is merged. The checker and a passing test suite do not grant merge approval.
+
+No automatic upstream merges, force pushes, or destructive resets are allowed. Never force-push; stop for human review if history or conflicts require special handling.
+
 1. No automatic upstream merges, force pushes, or destructive resets. Establish a merge base and review the full diff in an isolated worktree before integrating upstream changes.
 2. Preserve the user's production data: **never** test migrations against the installed application profile. Copy user-data and SQLite WAL/shm consistently to an isolated temporary profile and verify restoration before migration.
 3. Do not modify application identifiers, signing credentials, distribution channels, or installed applications without an explicit release review.
