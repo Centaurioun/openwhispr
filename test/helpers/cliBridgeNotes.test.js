@@ -111,3 +111,97 @@ test("PATCH /v1/notes/:id clears a provided blank text field so the clear syncs"
     { code: "VALIDATION" }
   );
 });
+
+test("GET /v1/notes/:id preserves original transcript and adds the current approved transcript", (t) => {
+  const ctx = createBridge(t);
+  if (!ctx) return;
+
+  const sourceTranscript = '[{"text":"Original words"}]';
+  const { id } = ctx.db.saveNote("Transcript", "", "meeting", null, null, null, null, sourceTranscript).note;
+  const sourceHash = require("node:crypto").createHash("sha256").update(sourceTranscript).digest("hex");
+  ctx.db.getTranscriptWorkspace = () => ({
+    noteId: id,
+    sourceTranscript,
+    sourceHash,
+    baselineSourceHash: sourceHash,
+    currentVersion: 1,
+    approvedOperations: [
+      {
+        kind: "replaceText",
+        segmentId: `source-${sourceHash.slice(0, 16)}-0`,
+        before: "Original words",
+        after: "Approved words",
+      },
+    ],
+    stale: false,
+  });
+
+  const result = call(ctx.bridge, "GET", `/v1/notes/${id}`);
+
+  assert.equal(result.data.transcript, sourceTranscript);
+  assert.equal(result.data.transcript_studio.approved.status, "available");
+  assert.match(result.data.transcript_studio.approved.text, /Approved words/);
+  assert.doesNotMatch(result.data.transcript_studio.approved.text, /Original words/);
+});
+
+test("GET /v1/notes/:id keeps Original available and fails closed for a stale approved transcript", (t) => {
+  const ctx = createBridge(t);
+  if (!ctx) return;
+
+  const sourceTranscript = '[{"text":"Original words"}]';
+  const { id } = ctx.db.saveNote("Transcript", "", "meeting", null, null, null, null, sourceTranscript).note;
+  const sourceHash = require("node:crypto").createHash("sha256").update(sourceTranscript).digest("hex");
+  ctx.db.getTranscriptWorkspace = () => ({
+    noteId: id,
+    sourceTranscript,
+    sourceHash,
+    baselineSourceHash: "old-source-hash",
+    currentVersion: 1,
+    approvedOperations: [],
+    stale: true,
+  });
+
+  const result = call(ctx.bridge, "GET", `/v1/notes/${id}`);
+
+  assert.equal(result.data.transcript, sourceTranscript);
+  assert.equal(result.data.transcript_studio.approved.status, "stale");
+  assert.equal("text" in result.data.transcript_studio.approved, false);
+});
+
+test("GET /v1/notes/:id keeps Original available and fails closed for malformed approved operations", (t) => {
+  const ctx = createBridge(t);
+  if (!ctx) return;
+
+  const sourceTranscript = '[{"text":"Original words"}]';
+  const { id } = ctx.db.saveNote("Transcript", "", "meeting", null, null, null, null, sourceTranscript).note;
+  const sourceHash = require("node:crypto").createHash("sha256").update(sourceTranscript).digest("hex");
+  ctx.db.getTranscriptWorkspace = () => ({
+    noteId: id,
+    sourceTranscript,
+    sourceHash,
+    baselineSourceHash: sourceHash,
+    currentVersion: 1,
+    approvedOperations: [{ kind: "replaceText", segmentId: "not-in-source", before: "Original", after: "Lost" }],
+    stale: false,
+  });
+
+  const result = call(ctx.bridge, "GET", `/v1/notes/${id}`);
+
+  assert.equal(result.data.transcript, sourceTranscript);
+  assert.equal(result.data.transcript_studio.approved.status, "invalid");
+  assert.equal("text" in result.data.transcript_studio.approved, false);
+});
+
+test("GET /v1/notes/:id cannot read a note from a different active account", (t) => {
+  const ctx = createBridge(t);
+  if (!ctx) return;
+
+  ctx.db.setActiveAccountId("synthetic-account-a");
+  const { id } = ctx.db.saveNote("Private fixture", "Synthetic account A body").note;
+  ctx.db.setActiveAccountId("synthetic-account-b");
+
+  assert.throws(() => call(ctx.bridge, "GET", `/v1/notes/${id}`), {
+    code: "NOT_FOUND",
+    message: `Note ${id} not found`,
+  });
+});

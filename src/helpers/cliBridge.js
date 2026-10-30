@@ -429,7 +429,33 @@ class CliBridge {
           err.code = "NOT_FOUND";
           throw err;
         }
-        return { data: note };
+        const data = { ...note };
+        if (typeof note.transcript === "string" && note.transcript.trim()) {
+          // The CLI already obtains the source transcript through this note-scoped,
+          // account-scoped route. Add the approved view from the canonical main-process
+          // resolver so local MCP clients can select it without reading database files.
+          // A stale or malformed overlay never replaces or hides the original source.
+          let approved;
+          try {
+            const workspace = db.getTranscriptWorkspace(id);
+            const { resolveTranscriptExport } = require("./transcriptStudioExport");
+            const { formatTxt } = require("./transcriptFormatter");
+            const resolved = resolveTranscriptExport(workspace, {
+              version: "approved",
+              expectedSourceHash: workspace.sourceHash,
+            });
+            approved = {
+              status: "available",
+              version: workspace.currentVersion,
+              text: formatTxt(note, resolved.segments, {}),
+            };
+          } catch (error) {
+            const stale = /source changed|stale overlay/i.test(String(error?.message || error));
+            approved = { status: stale ? "stale" : "invalid" };
+          }
+          data.transcript_studio = { approved };
+        }
+        return { data };
       }),
       exact(
         "POST",

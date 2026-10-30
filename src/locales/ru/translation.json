@@ -4279,14 +4279,32 @@
     "mcp": {
       "description": "Общайтесь, ищите и работайте с заметками в Claude, ChatGPT и Cursor.",
       "step1": "В вашем инструменте ИИ добавьте OpenWhispr MCP, используя публичный URL",
-      "proRequired": "Перейдите на платный план, чтобы подключить OpenWhispr к Claude, ChatGPT и Cursor.",
       "worksWith": "Работает с",
       "copyUrl": "Копировать URL MCP",
       "copied": "Скопировано",
       "oauthTitle": "Войти через OAuth",
       "oauthDescription": "В клиенте с поддержкой OAuth добавьте URL сервера, затем войдите в OpenWhispr и разрешите доступ. Ключ API не нужен.",
       "apiKeyTitle": "Использовать ключ API",
-      "apiKeyDescription": "Для клиентов, поддерживающих заголовки запросов, создайте личный ключ API с нужными разрешениями и используйте заголовок ниже."
+      "apiKeyDescription": "Для клиентов, поддерживающих заголовки запросов, создайте личный ключ API с нужными разрешениями и используйте заголовок ниже.",
+      "local": {
+        "title": "Локальный MCP",
+        "freeBadge": "Бесплатно",
+        "description": "Запустите MCP-сервер на этом компьютере и подключите его к приложению OpenWhispr. Для чтения локальных заметок и расшифровок OpenWhispr должен работать.",
+        "privacy": "Для Local MCP не нужны Pro, подписка на Hosted MCP от OpenWhispr или ключ API OpenAI. Ваш MCP-клиент может отправлять прочитанный текст своему поставщику ИИ.",
+        "setup": "Настройка из папки исходного кода OpenWhispr",
+        "buildCommandLabel": "Установить закреплённую версию CLI OpenWhispr и собрать локальный MCP-сервер",
+        "addToCodexLabel": "Зарегистрировать в Codex",
+        "copyCommand": "Скопировать команду",
+        "statusLabel": "Проверка конфигурации",
+        "statusDescription": "Проверяет сохранённую запись Codex. Чтобы проверить активное соединение, попросите Codex перечислить или найти локальные заметки.",
+        "verifyCommandLabel": "Проверить сохранённую запись сервера",
+        "setupGuideLabel": "Открыть руководство по настройке Local MCP"
+      },
+      "hosted": {
+        "title": "Размещённый MCP",
+        "description": "Общайтесь, ищите и работайте с заметками в Claude, ChatGPT и Cursor."
+      },
+      "proRequired": "Перейдите на платный план, чтобы подключить OpenWhispr к Claude, ChatGPT и Cursor."
     },
     "cli": {
       "description": "Дайте своему помощнику доступ к заметкам из терминала.",

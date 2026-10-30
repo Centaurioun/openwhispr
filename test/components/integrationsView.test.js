@@ -202,7 +202,7 @@ test("sectionMeta shows counts on a paid plan and plan badges on a free one", as
   assert.deepEqual(sectionMeta("connectors", free), { kind: "badge", badge: "pro" });
   assert.deepEqual(sectionMeta("calendars", free), { kind: "count", value: 1 });
   assert.deepEqual(sectionMeta("api", free), { kind: "badge", badge: "pro" });
-  assert.deepEqual(sectionMeta("mcp", free), { kind: "badge", badge: "pro" });
+  assert.deepEqual(sectionMeta("mcp", free), { kind: "badge", badge: "free" });
   assert.deepEqual(sectionMeta("cli", free), { kind: "badge", badge: "free" });
 
   assert.equal(sectionMeta("connectors", empty), null);
@@ -403,7 +403,7 @@ test("a free plan sees plan badges, the API upsell, and no key list", async (t) 
   );
   assert.equal(
     label(navButton(container, "mcp")),
-    "integrations.nav.sections.mcpintegrations.plan.pro"
+    "integrations.nav.sections.mcpintegrations.cli.local.freeBadge"
   );
   assert.equal(
     label(navButton(container, "cli")),
@@ -416,14 +416,38 @@ test("a free plan sees plan badges, the API upsell, and no key list", async (t) 
   assert.equal(upgrades.count, 1);
 });
 
-test("a free plan still sees MCP's setup steps, with Create API key disabled", async (t) => {
-  const { container } = await renderView(t, { isPaid: false, section: "mcp" });
+test("a free plan sees Local MCP without a Pro gate while Hosted MCP stays gated", async (t) => {
+  const { container, upgrades } = await renderView(t, { isPaid: false, section: "mcp" });
 
+  assert.match(container.textContent, /integrations\.mcp\.local\.title/);
+  assert.match(container.textContent, /integrations\.mcp\.local\.freeBadge/);
+  assert.match(container.textContent, /integrations\.mcp\.local\.description/);
+  assert.match(container.textContent, /integrations\.mcp\.local\.setup/);
+  assert.match(container.textContent, /npm install -g @openwhispr\/cli@0\.3\.0/);
+  assert.match(
+    container.textContent,
+    /codex mcp add openwhispr-local -- node "\$PWD\/tools\/local-mcp\/dist\/server\.js"/
+  );
+  assert.match(container.textContent, /integrations\.mcp\.hosted\.title/);
   assert.match(container.textContent, /integrations\.mcp\.proRequired/);
+  assert.doesNotMatch(container.textContent, /integrations\.mcp\.local\.proRequired/);
   assert.match(container.textContent, /https:\/\/mcp\.openwhispr\.com\/mcp/);
   assert.notEqual(
     buttonWithText(container, "apiKeysSection.createButton").getAttribute("disabled"),
     null
+  );
+  await React.act(async () => click(buttonWithText(container, "integrations.api.viewPlans")));
+  assert.equal(upgrades.count, 1);
+});
+
+test("Local MCP setup guide opens the local setup document", async (t) => {
+  const { container, openedUrls } = await renderView(t, { section: "mcp" });
+  await React.act(async () =>
+    click(buttonWithText(container, "integrations.mcp.local.setupGuideLabel"))
+  );
+  assert.equal(
+    openedUrls.at(-1),
+    "https://github.com/Centaurioun/openwhispr/blob/codex/local-mcp-2026-10-30/docs/custom/local-mcp-setup.md"
   );
 });
 
@@ -451,7 +475,7 @@ test("API, MCP and CLI use one docs label and open their own documentation", asy
   }
 });
 
-test("MCP offers OAuth and API-key alternatives on free and paid plans", async (t) => {
+test("Hosted MCP preserves its setup and API-key entitlement checks on free and paid plans", async (t) => {
   for (const isPaid of [true, false])
     await t.test(String(isPaid), async (st) => {
       const { container } = await renderView(st, { section: "mcp", isPaid });
