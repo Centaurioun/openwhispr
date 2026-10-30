@@ -47,6 +47,7 @@ function harness({ native = true, local = false } = {}) {
         ? () => imported({ now: () => now, wallNow: () => now })
         : imported;
     },
+    isQaCaptureDenialActive: () => false,
     Buffer,
     _audioFeaturePolicy: { failure: () => null, activeFailure: () => null },
     path,

@@ -19,6 +19,8 @@ const tokenStore = require("./tokenStore");
 const accountScopeBinding = require("./accountScopeBinding");
 const { registerProductHelpIpc, remoteHelpPolicyState } = require("./productHelp");
 const { createCloudApiRequestHandler } = require("./cloudApiRequest");
+const { registerTranscriptStudioWriteIpcHandlers } = require("./transcriptStudioAccess");
+const { isQaCaptureDenialActive, qaCaptureDeniedResult } = require("./qaCapturePolicy");
 const { MetaActivation } = require("./metaActivation");
 const { decodeLeaderboardPngDataUrl, leaderboardImageFilename } = require("./leaderboardImage");
 const { withPolicyRequestHeaders } = require("./policyRequestHeaders");
@@ -1630,13 +1632,32 @@ class IPCHandlers {
     // Each handler takes at most one renderer argument, so the job's signal
     // always lands after it and can't be supplied by the renderer.
     const handleAudioFeature = (channel, purpose, handler) =>
-      ipcMain.handle(channel, (event, options) =>
-        this._audioFeaturePolicy.run(event, purpose, (signal) => handler(event, options, signal))
-      );
+      ipcMain.handle(channel, (event, options) => {
+        if (channel === "meeting-transcription-start") {
+          const denied = qaCaptureDeniedResult();
+          if (denied) return denied;
+        }
+        return this._audioFeaturePolicy.run(event, purpose, (signal) =>
+          handler(event, options, signal)
+        );
+      });
     // Runs a job under the audio policy and the caller's own cancellation
     // ({ signal, release }); the handler gets one signal for both.
     const runAudioJob = (event, purpose, { signal, release }, handler) =>
       this._audioFeaturePolicy.run(event, purpose, handler, { signal }).finally(release);
+    const resolveTranscriptCloudPermission = async (cloudId) => {
+      const response = await handleCloudApiRequest({
+        method: "GET",
+        path: `/api/notes/${encodeURIComponent(cloudId)}/access`,
+      });
+      if (!response.success) throw new Error("Unable to verify transcript edit permission");
+      return response.data?.my_permission;
+    };
+    registerTranscriptStudioWriteIpcHandlers(
+      ipcMain,
+      this.databaseManager,
+      resolveTranscriptCloudPermission
+    );
     ipcMain.handle("onboarding-set-window-mode", (_event, mode) =>
       this.windowManager.setOnboardingWindowMode(mode)
     );
@@ -2492,6 +2513,16 @@ class IPCHandlers {
       return this.databaseManager.getNote(id);
     });
 
+    ipcMain.handle("transcript-studio-get-workspace", (_event, noteId) =>
+      this.databaseManager.getTranscriptWorkspace(noteId)
+    );
+    ipcMain.handle("transcript-studio-list-versions", (_event, noteId) =>
+      this.databaseManager.listTranscriptVersions(noteId)
+    );
+    ipcMain.handle("transcript-studio-get-version", (_event, noteId, versionId) =>
+      this.databaseManager.getTranscriptVersion(noteId, versionId)
+    );
+
     ipcMain.handle("db-get-notes", async (event, noteType, limit, folderId, spaceId, spaceIds) => {
       return this.databaseManager.getNotes(noteType, limit, folderId, spaceId, spaceIds);
     });
@@ -3261,13 +3292,51 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("export-transcript", async (event, noteId, format) => {
+    ipcMain.handle("export-transcript", async (event, noteId, format, resolved) => {
       try {
         const note = this.databaseManager.getNote(noteId);
         if (!note) return { success: false, error: "Note not found" };
 
-        const segments = JSON.parse(note.transcript || "[]");
+        let segments;
+        let resolvedSourceTranscript = null;
+        let resolvedOriginal = false;
+        let resolvedSourceIsValidJson = false;
+        if (resolved !== undefined) {
+          if (
+            !resolved ||
+            !(resolved.version === "original" || resolved.version === "approved") ||
+            typeof resolved.expectedSourceHash !== "string"
+          ) {
+            return { success: false, error: "Invalid transcript selection" };
+          }
+          // Re-read through the active-account-scoped repository so a stale
+          // renderer selection or revoked note access cannot be exported.
+          const workspace = this.databaseManager.getTranscriptWorkspace(noteId);
+          const { resolveTranscriptExport } = require("./transcriptStudioExport");
+          const result = resolveTranscriptExport(workspace, resolved);
+          segments = result.segments;
+          resolvedOriginal = result.isOriginal;
+          resolvedSourceTranscript = result.sourceTranscript;
+          resolvedSourceIsValidJson = result.sourceIsValidJson;
+        } else {
+          segments = JSON.parse(note.transcript || "[]");
+        }
         if (!segments.length) return { success: false, error: "No transcript available" };
+        if (
+          (format === "srt" &&
+            segments.some(
+              (segment) =>
+                typeof segment.timestamp !== "number" ||
+                !Number.isFinite(segment.timestamp) ||
+                segment.timestamp < 0
+            )) ||
+          (format === "srt" &&
+            segments.some(
+              (segment, index) => index > 0 && segment.timestamp < segments[index - 1].timestamp
+            ))
+        ) {
+          return { success: false, error: "SRT export requires transcript timestamps" };
+        }
 
         const speakerMappings = this._buildSpeakerMappings(noteId);
 
@@ -3291,7 +3360,9 @@ class IPCHandlers {
 
         const transcriptFormatter = require("./transcriptFormatter");
         let exportContent;
-        if (format === "txt") {
+        if (resolvedOriginal && resolvedSourceIsValidJson && format === "json") {
+          exportContent = resolvedSourceTranscript;
+        } else if (format === "txt") {
           exportContent = transcriptFormatter.formatTxt(note, segments, speakerMappings);
         } else if (format === "srt") {
           exportContent = transcriptFormatter.formatSrt(segments, speakerMappings, note);
@@ -6396,6 +6467,8 @@ class IPCHandlers {
     ipcMain.handle("check-screen-recording-access", () => screenContextCapture.getAccessResult());
 
     ipcMain.handle("request-screen-recording-access", async () => {
+      if (isQaCaptureDenialActive())
+        return { success: false, status: "denied", code: "QA_CAPTURE_DENIED" };
       const status = await screenContextCapture.requestAccess();
       if (process.platform === "darwin" && status !== "granted") {
         await openSystemSettings("screenRecording");
@@ -6464,6 +6537,8 @@ class IPCHandlers {
       this.windowManager.getAgentDictationPillState().interactive;
 
     ipcMain.handle("toggle-agent-panel-dictation", (event) => {
+      const denied = qaCaptureDeniedResult();
+      if (denied) return denied;
       if (!isAgentDictationPill(event) || !isAgentDictationPillInteractive()) {
         return { success: false };
       }
@@ -6514,6 +6589,9 @@ class IPCHandlers {
     });
 
     ipcMain.handle("request-microphone-access", async () => {
+      if (isQaCaptureDenialActive()) {
+        return { granted: false, status: "denied", code: "QA_CAPTURE_DENIED" };
+      }
       if (process.platform !== "darwin") {
         return { granted: true, status: "granted" };
       }
@@ -6620,12 +6698,16 @@ class IPCHandlers {
     ipcMain.handle("check-system-audio-access", () => getSystemAudioAccess());
 
     ipcMain.handle("permission-guide-verify-system-audio", async () => {
+      if (isQaCaptureDenialActive())
+        return { success: false, status: "denied", code: "QA_CAPTURE_DENIED" };
       if (!this.audioTapManager?.isSupported()) return buildSystemAudioAccess();
       const result = await this.audioTapManager.requestAccess();
       return buildSystemAudioAccess({ ...result, mode: "native", strategy: "native" });
     });
 
     ipcMain.handle("request-system-audio-access", async () => {
+      if (isQaCaptureDenialActive())
+        return { success: false, status: "denied", code: "QA_CAPTURE_DENIED" };
       if (process.platform === "win32") {
         return getWindowsSystemAudioAccess();
       }
@@ -10441,6 +10523,7 @@ class IPCHandlers {
     // capturedAt marks audio the renderer held while main connected; it is
     // clamped to the connect window so a renderer can't move the timeline.
     ipcMain.on("meeting-transcription-send", (_event, audioBuffer, source, capturedAt) => {
+      if (isQaCaptureDenialActive()) return;
       const buffer = Buffer.isBuffer(audioBuffer) ? audioBuffer : Buffer.from(audioBuffer);
       if (source === "system") {
         const route = meetingSystemAudioHandover.acceptRendererChunk(buffer);
@@ -10698,6 +10781,8 @@ class IPCHandlers {
 
     let dictationWarmupQueue = Promise.resolve();
     ipcMain.handle("dictation-realtime-warmup", (event, options = {}) => {
+      const denied = qaCaptureDeniedResult();
+      if (denied) return denied;
       const warmup = dictationWarmupQueue
         .then(() => warmupDictationStreaming(event, options))
         .catch(streamingStartFailure);
@@ -10706,6 +10791,8 @@ class IPCHandlers {
     });
 
     ipcMain.handle("dictation-realtime-start", async (event, options = {}) => {
+      const denied = qaCaptureDeniedResult();
+      if (denied) return denied;
       try {
         clearDictationIdleTimer();
         this._dictationPreviewEnabled = !!options.preview;
@@ -10753,6 +10840,8 @@ class IPCHandlers {
     ipcMain.handle(
       "start-dictation-preview",
       async (_event, { provider, model, language, display = true }) => {
+        const denied = qaCaptureDeniedResult();
+        if (denied) return denied;
         resetDictationPreviewState();
         const gen = dictationPreviewGen;
         dictationPreviewMode = true;

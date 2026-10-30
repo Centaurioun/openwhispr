@@ -4,6 +4,7 @@ const Module = require("node:module");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { createHash } = require("node:crypto");
 
 const handlersModulePath = require.resolve("../../src/helpers/ipcHandlers");
 const originalLoad = Module._load;
@@ -11,6 +12,7 @@ const handlers = new Map();
 let saveDialogOptions;
 let saveDialogResult;
 let note;
+let transcriptWorkspace;
 
 const electronStub = {
   app: {
@@ -57,7 +59,9 @@ Module._load = function loadWithMocks(request, parent, isMain) {
   if (request === "electron") return electronStub;
   if (
     parent?.filename === handlersModulePath &&
-    (request.startsWith("./") || request.startsWith("../"))
+    (request.startsWith("./") || request.startsWith("../")) &&
+    request !== "./transcriptFormatter" &&
+    request !== "./transcriptStudioExport"
   ) {
     return anything();
   }
@@ -81,6 +85,7 @@ test.before(() => {
   const target = {
     databaseManager: {
       getNote: () => note,
+      getTranscriptWorkspace: () => transcriptWorkspace,
     },
     _buildSpeakerMappings: () => ({}),
   };
@@ -98,6 +103,18 @@ test.beforeEach(() => {
     id: 1,
     title: "Team sync",
     transcript: JSON.stringify([{ text: "Hello", start: 0, end: 1 }]),
+  };
+  const sourceHash = createHash("sha256").update(note.transcript, "utf8").digest("hex");
+  transcriptWorkspace = {
+    noteId: 1,
+    sourceTranscript: note.transcript,
+    originalTranscript: note.transcript,
+    sourceHash,
+    baselineSourceHash: sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
   };
 });
 
@@ -139,6 +156,135 @@ async function exportNoteToFile(t, content, format = "txt") {
   assert.deepEqual(await handlers.get("export-note")({}, 1, format), { success: true });
   return fs.readFileSync(filePath, "utf8");
 }
+
+async function exportTranscriptToFile(t, format, resolved) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-transcript-export-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, `transcript.${format}`);
+  saveDialogResult = { canceled: false, filePath };
+  const result = await handlers.get("export-transcript")({}, 1, format, resolved);
+  return { result, content: fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null };
+}
+
+test("transcript export resolves approved operations in the main process, ignoring forged renderer segments", async (t) => {
+  const raw = '[{"text":"Raw source","source":"mic","timestamp":0,"opaque":"preserved"}]';
+  const sourceHash = createHash("sha256").update(raw, "utf8").digest("hex");
+  note.transcript = raw;
+  transcriptWorkspace = {
+    ...transcriptWorkspace,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash,
+    baselineSourceHash: sourceHash,
+    currentVersion: 1,
+    versionId: "version-1",
+    approvedOperations: [
+      {
+        kind: "replaceText",
+        segmentId: `source-${sourceHash.slice(0, 16)}-0`,
+        before: "Raw source",
+        after: "Approved source",
+      },
+    ],
+  };
+
+  const { result, content } = await exportTranscriptToFile(t, "json", {
+    version: "approved",
+    expectedSourceHash: sourceHash,
+    segments: [{ text: "FORGED RENDERER DATA", timestamp: 0 }],
+  });
+
+  assert.deepEqual(result, { success: true });
+  const exported = JSON.parse(content);
+  assert.equal(exported.segments[0].text, "Approved source");
+  assert.doesNotMatch(content, /FORGED RENDERER DATA/);
+});
+
+test("original transcript JSON export preserves the raw bytes exactly", async (t) => {
+  const raw = '[ { "text" : "İlk satır\\nİkinci satır 👋", "extra" : [1,2] } ]\n';
+  const sourceHash = createHash("sha256").update(raw, "utf8").digest("hex");
+  note.transcript = raw;
+  transcriptWorkspace = {
+    ...transcriptWorkspace,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash,
+    baselineSourceHash: sourceHash,
+  };
+
+  const { result, content } = await exportTranscriptToFile(t, "json", {
+    version: "original",
+    expectedSourceHash: sourceHash,
+    segments: [{ text: "renderer copy differs" }],
+  });
+
+  assert.deepEqual(result, { success: true });
+  assert.equal(content, raw);
+});
+
+test("original plain-text transcript JSON export is valid JSON containing the source text", async (t) => {
+  const raw = "A plain transcript with no JSON structure. 🌍";
+  const sourceHash = createHash("sha256").update(raw, "utf8").digest("hex");
+  note.transcript = raw;
+  transcriptWorkspace = {
+    ...transcriptWorkspace,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash,
+    baselineSourceHash: sourceHash,
+  };
+
+  const { result, content } = await exportTranscriptToFile(t, "json", {
+    version: "original",
+    expectedSourceHash: sourceHash,
+  });
+
+  assert.deepEqual(result, { success: true });
+  const exported = JSON.parse(content);
+  assert.equal(exported.segments[0].text, raw);
+});
+
+test("approved speaker reassignment clears the source placeholder and exports the approved identity", async (t) => {
+  const raw = JSON.stringify([
+    {
+      text: "A speaker label was corrected.",
+      source: "system",
+      speaker: "speaker_0",
+      speakerName: "Speaker 1",
+      speakerIsPlaceholder: true,
+      timestamp: 2,
+    },
+  ]);
+  const sourceHash = createHash("sha256").update(raw, "utf8").digest("hex");
+  note.transcript = raw;
+  transcriptWorkspace = {
+    ...transcriptWorkspace,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash,
+    baselineSourceHash: sourceHash,
+    currentVersion: 1,
+    versionId: "version-1",
+    approvedOperations: [
+      {
+        kind: "setSpeaker",
+        segmentId: `source-${sourceHash.slice(0, 16)}-0`,
+        speakerId: "speaker_7",
+        speakerName: "Ada Lovelace",
+        speakerLocked: true,
+      },
+    ],
+  };
+
+  const { result, content } = await exportTranscriptToFile(t, "md", {
+    version: "approved",
+    expectedSourceHash: sourceHash,
+  });
+
+  assert.deepEqual(result, { success: true });
+  assert.match(content, /\*\*Ada Lovelace\*\*/);
+  assert.doesNotMatch(content, /Speaker 1/);
+});
 
 test("Text note export preserves literal identifiers, arithmetic and fenced code", async (t) => {
   const content = "File: report_final.csv\nCompute 2 * 3.\n```sh\nls ~/project_*\n```";

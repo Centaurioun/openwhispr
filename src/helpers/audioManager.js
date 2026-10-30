@@ -23,6 +23,7 @@ import {
 } from "./localSpeechGate";
 import { reacquireIfDead } from "./micTrackHealth";
 import { isMicWarm, WARMUP_ACQUIRE_TIMEOUT_MS } from "./micWarmState";
+import { assertCaptureAllowed } from "./qaCapturePolicy.mjs";
 import {
   PreparedMicCapture,
   disposePreparedCapture,
@@ -1356,6 +1357,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   // warmupMicDriver (#845): a raced warm-up never resolved before the
   // recording's own open, so it only ever added a concurrent double open.
   async prepareMicCapture() {
+    assertCaptureAllowed();
     // Preparing opens the device, so it answers to the same policy as the
     // recording it anticipates — otherwise a blocked user's key-down would
     // still light the mic and buffer pre-roll.
@@ -1487,6 +1489,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   async _acquireCaptureStream(constraints) {
+    assertCaptureAllowed();
     const key = this._constraintsKey(constraints);
     const held = this.micStreamHold.acquireClone(key);
     if (held) {
@@ -1580,6 +1583,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   async startRecording(forceDefaultMic = false) {
+    assertCaptureAllowed();
     let prepared = null;
     let preparedAdopted = false;
     let freshTap = null;
@@ -5243,6 +5247,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   async startStreamingRecording(forceDefaultMic = false) {
+    assertCaptureAllowed();
     let acquiredStream = null;
     let usedPreparedCapture = false;
     let sessionId = null;

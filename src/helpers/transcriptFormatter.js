@@ -172,6 +172,18 @@ function formatTxt(note, segments, speakerMappings) {
 }
 
 function formatSrt(segments, speakerMappings, note = {}) {
+  // SRT requires real cue positions. Do not infer zero/ordering from note dates,
+  // audio duration or array position when any segment has missing or invalid time.
+  if (
+    segments.length === 0 ||
+    segments.some(
+      (seg) =>
+        typeof seg.timestamp !== "number" || !Number.isFinite(seg.timestamp) || seg.timestamp < 0
+    ) ||
+    segments.some((seg, index) => index > 0 && seg.timestamp < segments[index - 1].timestamp)
+  ) {
+    return "";
+  }
   const merged = mergeSegments(normalizeSegmentTimestamps(segments, note));
   // Upload transcripts carry no speaker identity at all; prefixing every cue
   // with "Unknown Speaker:" would defeat the subtitle use case. Meeting

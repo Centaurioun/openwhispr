@@ -1,9 +1,52 @@
 import type { ModelDefinition } from "../models/ModelRegistry";
 import type { ReasoningConfig } from "../services/BaseReasoningService";
 import type { PermissionGuideState, PermissionGuideAction } from "./permissionGuide";
+import type { EditOperation } from "../custom-features/transcript-studio/domain/editOperations";
 import type { TinfoilCatalogModel } from "../models/tinfoilModels";
 import type { UsageResponse } from "../lib/usageStore";
 import type { DictationTone, ToneAppCategory } from "../config/toneStyle";
+
+export interface TranscriptStudioWorkspace {
+  noteId: number;
+  sourceTranscript: string;
+  originalTranscript: string;
+  sourceHash: string;
+  baselineSourceHash: string;
+  currentVersion: number;
+  versionId: string | null;
+  approvedOperations: unknown[];
+  stale: boolean;
+}
+
+export interface ResolvedTranscriptExport {
+  version: "original" | "approved";
+  expectedSourceHash: string;
+}
+
+export interface TranscriptStudioVersionMeta {
+  versionId: string;
+  version: number;
+  description: string;
+  createdAt: string | null;
+}
+
+export interface TranscriptStudioVersion extends TranscriptStudioVersionMeta {
+  sourceHash: string;
+  operations: unknown[];
+}
+
+export interface ApplyTranscriptRevisionInput {
+  noteId: number;
+  expectedVersion: number;
+  sourceHash: string;
+  operations: EditOperation[];
+  description: string;
+  /** Renderer identity assertion only; the main process remains authoritative. */
+  expectedAccountId: string | null;
+}
+
+export type ApplyTranscriptRevisionResult =
+  { version: number; workspace: TranscriptStudioWorkspace } | { conflict: true };
 import type { OrgPolicy } from "./policy";
 import type { EnterpriseAudioSetupContext, EnterpriseAudioTestLink } from "./enterpriseAudio";
 import type { TechnicalErrorDetailsData } from "../components/ui/useToast";
@@ -1828,6 +1871,18 @@ declare global {
         transcript?: string | null
       ) => Promise<{ success: boolean; note?: NoteItem }>;
       getNote: (id: number) => Promise<NoteItem | null>;
+      getTranscriptWorkspace: (noteId: number) => Promise<TranscriptStudioWorkspace>;
+      applyTranscriptRevision: (
+        input: ApplyTranscriptRevisionInput
+      ) => Promise<ApplyTranscriptRevisionResult>;
+      listTranscriptVersions: (noteId: number) => Promise<TranscriptStudioVersionMeta[]>;
+      getTranscriptVersion: (noteId: number, versionId: string) => Promise<TranscriptStudioVersion>;
+      restoreTranscriptVersion: (
+        noteId: number,
+        versionId: string,
+        expectedVersion: number,
+        expectedAccountId: string | null
+      ) => Promise<TranscriptStudioWorkspace>;
       getNotes: (
         noteType?: string | null,
         limit?: number,
@@ -1875,7 +1930,8 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>;
       exportTranscript: (
         noteId: number,
-        format: "txt" | "srt" | "json" | "md"
+        format: "txt" | "srt" | "json" | "md",
+        resolved?: ResolvedTranscriptExport
       ) => Promise<{ success: boolean; error?: string }>;
       exportDictionary: (words: string[]) => Promise<{ success: boolean; error?: string }>;
       searchNotes: (

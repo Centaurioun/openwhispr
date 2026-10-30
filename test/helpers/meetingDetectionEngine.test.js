@@ -164,6 +164,25 @@ test("a live recording with no note id still blocks a second manual meeting", as
   assert.deepEqual(noteNavigations, []);
 });
 
+test("capture-denied QA disables detection start and manual meeting hotkey actions", async () => {
+  const previous = process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+  process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE = "1";
+  try {
+    const { engine, audioDetector, processDetector } = createEngine();
+
+    engine.setPreferences({ audioDetection: true, processDetection: true });
+    engine.start();
+    const result = await engine.startManualMeeting({ activate: false });
+
+    assert.equal(audioDetector.running, false, "QA must not enable the mic activity detector");
+    assert.equal(processDetector.running, false, "QA must not enable automatic meeting detection");
+    assert.deepEqual(result, { success: false, code: "QA_CAPTURE_DENIED" });
+  } finally {
+    if (previous === undefined) delete process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+    else process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE = previous;
+  }
+});
+
 // Join & transcribe resumes only a note the user owns for the event: a
 // teammate's synced note for the same invite never comes back from the lookup,
 // so the join must create the user's own note rather than record into theirs.

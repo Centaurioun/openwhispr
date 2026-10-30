@@ -26,6 +26,7 @@ function harness() {
   const handlers = {};
   const context = {
     Buffer,
+    isQaCaptureDenialActive: () => false,
     Date,
     path,
     os: { tmpdir: () => "/tmp" },

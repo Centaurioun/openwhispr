@@ -314,14 +314,7 @@ test("an uploaded transcript opens in Transcript and leaves Your notes available
   const note = db.getNote(saved.note.id);
   await render(undefined, { note });
   // No click: an upload without notes opens on its transcript.
-  let transcript = null;
-  walk(latest(), (node) => {
-    if (node.props.segments) transcript = node.props.segments;
-  });
-  assert.deepEqual(
-    transcript?.map((segment) => segment.text),
-    [text]
-  );
+  assert.equal(transcriptStudio(latest()).props.sourceTranscript, note.transcript);
   await click("raw");
   assert.ok(collectEditorValues(latest()).includes(""), "Your notes starts empty");
   db.updateNote(note.id, { content: "My own reminder" });
@@ -329,14 +322,7 @@ test("an uploaded transcript opens in Transcript and leaves Your notes available
   await click("raw");
   assert.ok(collectEditorValues(latest()).includes("My own reminder"));
   await click("transcript");
-  transcript = null;
-  walk(latest(), (node) => {
-    if (node.props.segments) transcript = node.props.segments;
-  });
-  assert.deepEqual(
-    transcript.map((segment) => segment.text),
-    [text]
-  );
+  assert.equal(transcriptStudio(latest()).props.sourceTranscript, note.transcript);
   await unmount();
   cleanup = () => {};
 });
@@ -430,13 +416,13 @@ test("the summary callout makes way for the transcript selection bar", async (t)
   await click("transcript");
   assert.ok(propsWith("onAskSubmit").callout, "a transcript without a summary offers one");
 
-  const transcript = propsWith("onToggleSelect");
-  await React.act(async () => transcript.onToggleSelect(transcript.segments[0].id));
-  assert.ok(propsWith("onAssignName"), "selecting a segment shows the selection bar");
-  // Both float in the same bottom strip; the callout would cover the bar's buttons.
+  const studio = transcriptStudio(latest());
+  assert.ok(studio, "persisted transcript renders in Transcript Studio");
+  await React.act(async () => studio.props.onToggleSelect("selected-segment"));
+  assert.equal(transcriptStudio(latest()).props.selectedSegmentIds.has("selected-segment"), true);
   assert.ok(
     !propsWith("onAskSubmit").callout,
-    "the callout steps aside while segments are selected"
+    "the callout steps aside while a transcript segment is selected"
   );
 
   await unmount();
@@ -818,6 +804,14 @@ function bodyEditor(tree) {
   return editor;
 }
 
+function transcriptStudio(tree) {
+  let studio = null;
+  walk(tree, (node) => {
+    if (!studio && node.type?.name === "TranscriptStudioView") studio = node;
+  });
+  return studio;
+}
+
 test("each tab has its own body editor, so undo never carries over between tabs", async (t) => {
   // An undo step from one tab, replayed over the other, would save there.
   const { render, click, latest, unmount } = await loadNoteEditor(t);
@@ -825,11 +819,46 @@ test("each tab has its own body editor, so undo never carries over between tabs"
   const keys = [bodyEditor(latest()).key];
   for (const tab of ["raw", "transcript"]) {
     await click(tab);
-    assert.equal(bodyEditor(latest()).props.disabled === true, tab === "transcript");
-    keys.push(bodyEditor(latest()).key);
+    if (tab === "transcript") {
+      const studio = transcriptStudio(latest());
+      assert.ok(studio, "the transcript tab uses Transcript Studio");
+      keys.push(studio.key);
+    } else {
+      assert.equal(bodyEditor(latest()).props.disabled, false);
+      keys.push(bodyEditor(latest()).key);
+    }
   }
   assert.ok(keys.every((key) => key != null));
   assert.equal(new Set(keys).size, 3, `distinct keys, got ${keys}`);
+  await unmount();
+});
+
+test("Studio transcript export offers explicit original and approved versions", async (t) => {
+  const { render, click, latest, unmount } = await loadNoteEditor(t);
+  const rawTranscript = "Original transcript";
+  const exports = [];
+  await render(undefined, {
+    note: { ...NOTE, transcript: rawTranscript },
+    onExportTranscript(format, version) {
+      exports.push({ format, version });
+    },
+  });
+  await click("transcript");
+
+  let exportOptions;
+  walk(latest(), (node) => {
+    if (Array.isArray(node.props.exportOptions)) exportOptions = node.props.exportOptions;
+  });
+  assert.equal(exportOptions.length, 8);
+  for (const option of exportOptions) option.onSelect();
+  assert.deepEqual(
+    exports,
+    ["txt", "srt", "md", "json"].flatMap((format) => [
+      { format, version: "original" },
+      { format, version: "approved" },
+    ])
+  );
+  assert.ok(transcriptStudio(latest()), "the transcript is rendered by Studio");
   await unmount();
 });
 
@@ -843,7 +872,10 @@ test("the body editor sits under the bottom bar's parent, which the bar publishe
     if (!barParent && children.some((child) => child.props?.onAskSubmit)) barParent = node;
   });
   assert.ok(barParent, "the note renders its bottom bar");
-  assert.ok(bodyEditor(barParent), "the body editor is inside the bar's parent");
+  assert.ok(
+    bodyEditor(barParent) || transcriptStudio(barParent),
+    "the active body editor is inside the bar's parent"
+  );
   await unmount();
 });
 
@@ -960,7 +992,7 @@ test("the note header hands its event link to the dropdown, changeable only by e
   }
 });
 
-test("a teammate's This is me correction saves their identity for display and generation", async (t) => {
+test("a teammate's transcript source remains immutable while viewing in Studio", async (t) => {
   globalThis.__noteEditorAuth = {
     isSignedIn: true,
     user: { id: "bob", name: "Bob Viewer", email: "bob@example.com" },
@@ -971,44 +1003,37 @@ test("a teammate's This is me correction saves their identity for display and ge
   const mapped = [];
   globalThis.window.electronAPI.setSpeakerMapping = async (...args) => mapped.push(args);
   globalThis.window.electronAPI.updateNote = async (_id, patch) => saved.push(patch);
+  const raw = JSON.stringify([{ source: "mic", speaker: "speaker_0", text: "I'll send it." }]);
   await render(undefined, {
     note: {
       ...NOTE,
       cloud_id: "shared-note",
       owner_user_id: "alice",
-      transcript: JSON.stringify([{ source: "mic", speaker: "speaker_0", text: "I'll send it." }]),
+      transcript: raw,
     },
   });
   await click("transcript");
-  await React.act(async () => {
-    let chat;
-    walk(latest(), (node) => {
-      if (node.props.onMapSpeaker) chat = node;
-    });
-    await chat.props.onMapSpeaker("speaker_0", "You");
-  });
-  assert.equal(mapped[0][2], "You", "the global self profile must keep its relative name");
-  assert.equal(JSON.parse(saved[0].transcript)[0].speakerName, "Bob Viewer");
-  const { buildLlmTranscript } = await import("../../src/utils/llmTranscript.ts");
-  assert.equal(
-    buildLlmTranscript(JSON.parse(saved[0].transcript), {}, "Alice", (key) => key),
-    "Bob Viewer: I'll send it."
+  const studio = transcriptStudio(latest());
+  assert.equal(studio.props.sourceTranscript, raw);
+  assert.equal(typeof studio.props.onMapSpeaker, "function");
+  const mappedName = await studio.props.onMapSpeaker(
+    "speaker_0",
+    "You",
+    null,
+    undefined,
+    undefined,
+    "You",
+    false
   );
-  await React.act(async () => {
-    let chat;
-    walk(latest(), (node) => {
-      if (node.props.onToggleSelect) chat = node;
-    });
-    chat.props.onToggleSelect(chat.props.segments[0].id);
-  });
-  await React.act(async () => {
-    let selection;
-    walk(latest(), (node) => {
-      if (node.props.onAssignName) selection = node;
-    });
-    await selection.props.onAssignName("You");
-  });
-  assert.equal(JSON.parse(saved.at(-1).transcript)[0].speakerName, "Bob Viewer");
+  assert.equal(mappedName, "Bob Viewer");
+  assert.equal(mapped[0][2], "You", "the global self profile retains its relative name");
+  assert.deepEqual(
+    saved,
+    [],
+    "speaker mapping may update its profile without rewriting transcript source"
+  );
+  assert.equal(transcriptStudio(latest()).props.sourceTranscript, raw);
+  assert.deepEqual(saved, [], "opening the persisted transcript never rewrites notes.transcript");
   await unmount();
 });
 
@@ -1016,16 +1041,23 @@ for (const [session, recorderName, expectedName] of [
   ["original", undefined, "Alice Recorder"],
   ["appended", "Carol Recorder", "Carol Recorder"],
 ]) {
-  test(`confirming an inherited ${session} self suggestion preserves its recorder`, async (t) => {
+  test(`an inherited ${session} self suggestion stays in the immutable source`, async (t) => {
     globalThis.__noteEditorAuth = {
       isSignedIn: true,
       user: { id: "bob", name: "Bob Viewer", email: "bob@example.com" },
     };
     t.after(() => delete globalThis.__noteEditorAuth);
     const { render, click, latest, unmount } = await loadNoteEditor(t, "editor");
-    const saved = [];
-    globalThis.window.electronAPI.setSpeakerMapping = async () => {};
-    globalThis.window.electronAPI.updateNote = async (_id, patch) => saved.push(patch);
+    const raw = JSON.stringify([
+      {
+        source: "mic",
+        speaker: "speaker_0",
+        text: "I'll send it.",
+        suggestedName: "You",
+        suggestedProfileId: 7,
+        recorderName,
+      },
+    ]);
     await render(undefined, {
       note: {
         ...NOTE,
@@ -1034,32 +1066,29 @@ for (const [session, recorderName, expectedName] of [
         participants: JSON.stringify([
           { email: "alice@example.com", displayName: "Alice Recorder", self: true },
         ]),
-        transcript: JSON.stringify([
-          {
-            source: "mic",
-            speaker: "speaker_0",
-            text: "I'll send it.",
-            suggestedName: "You",
-            suggestedProfileId: 7,
-            recorderName,
-          },
-        ]),
+        transcript: raw,
       },
     });
     await click("transcript");
-    await React.act(async () => {
-      let chat;
-      walk(latest(), (node) => {
-        if (node.props.onConfirmSuggestion) chat = node;
-      });
-      await chat.props.onConfirmSuggestion("speaker_0", "You", 7, recorderName);
-    });
-    assert.equal(JSON.parse(saved.at(-1).transcript)[0].speakerName, expectedName);
+    const studio = transcriptStudio(latest());
+    assert.equal(studio.props.sourceTranscript, raw);
+    assert.equal(typeof studio.props.onConfirmSuggestion, "function");
+    assert.equal(typeof studio.props.onDismissSuggestion, "function");
+    const acceptedName = await studio.props.onConfirmSuggestion(
+      "speaker_0",
+      "You",
+      7,
+      recorderName,
+      false
+    );
+    assert.equal(acceptedName, expectedName);
+    await studio.props.onDismissSuggestion("speaker_0", false);
+    assert.equal(transcriptStudio(latest()).props.sourceTranscript, raw);
     await unmount();
   });
 }
 
-test("confirming the current recorder's self suggestion preserves their global self profile", async (t) => {
+test("the current recorder's self suggestion stays in the immutable source", async (t) => {
   const { createDb } = require("../helpers/harness/db");
   const db = createDb(t);
   assert.ok(db);
@@ -1072,17 +1101,17 @@ test("confirming the current recorder's self suggestion preserves their global s
   t.after(() => cleanup());
   const { render, click, latest, unmount } = await loadNoteEditor(t, "editor");
   cleanup = unmount;
-  const embedding = Buffer.from(new Float32Array([1, 0]).buffer);
-  const selfProfile = db.upsertSpeakerProfile("You", null, embedding);
   const note = db.saveNote("Shared meeting", "", "meeting").note;
-  Object.assign(globalThis.window.electronAPI, {
-    getSpeakerProfiles: async () => db.getSpeakerProfiles(),
-    setSpeakerMapping: async (noteId, speakerId, displayName, email, profileId) => {
-      const profile = db.upsertSpeakerProfile(displayName, email, embedding, profileId);
-      return db.setSpeakerMapping(noteId, speakerId, profile.id, displayName);
+  const raw = JSON.stringify([
+    {
+      source: "mic",
+      speaker: "speaker_0",
+      text: "I'll send it.",
+      suggestedName: "You",
+      suggestedProfileId: 7,
+      recorderName: "Bob Viewer",
     },
-    updateNote: async (...args) => db.updateNote(...args),
-  });
+  ]);
   await render(undefined, {
     note: {
       ...NOTE,
@@ -1090,81 +1119,65 @@ test("confirming the current recorder's self suggestion preserves their global s
       cloud_id: "shared-note",
       owner_user_id: "alice",
       created_by_user_id: "alice",
-      transcript: JSON.stringify([
-        {
-          source: "mic",
-          speaker: "speaker_0",
-          text: "I'll send it.",
-          suggestedName: "You",
-          suggestedProfileId: selfProfile.id,
-          recorderName: "Bob Viewer",
-        },
-      ]),
+      transcript: raw,
     },
   });
   await click("transcript");
-  await React.act(async () => {
-    let chat;
-    walk(latest(), (node) => {
-      if (node.props.onConfirmSuggestion) chat = node;
-    });
-    await chat.props.onConfirmSuggestion("speaker_0", "You", selfProfile.id, "Bob Viewer");
-  });
-  assert.equal(JSON.parse(db.getNote(note.id).transcript)[0].speakerName, "Bob Viewer");
-  assert.equal(
-    db.getSpeakerProfiles().find((profile) => profile.id === selfProfile.id).display_name,
-    "You"
+  const studio = transcriptStudio(latest());
+  assert.equal(studio.props.sourceTranscript, raw);
+  const acceptedName = await studio.props.onConfirmSuggestion(
+    "speaker_0",
+    "You",
+    7,
+    "Bob Viewer",
+    false
   );
-  assert.equal(db.getSpeakerMappings(note.id)[0].display_name, "You");
+  assert.equal(acceptedName, "Bob Viewer");
+  assert.equal(transcriptStudio(latest()).props.sourceTranscript, raw);
+  assert.equal(db.getNote(note.id).transcript, null);
   await unmount();
   cleanup = () => {};
 });
 
-test("the owner can correct a teammate's self row without renaming earlier sessions", async (t) => {
+test("the owner's Studio view preserves teammate speaker rows in the source", async (t) => {
   globalThis.__noteEditorAuth = {
     isSignedIn: true,
     user: { id: "alice", name: "Alice Owner", email: "alice@example.com" },
   };
   t.after(() => delete globalThis.__noteEditorAuth);
   const { render, click, latest, unmount } = await loadNoteEditor(t, "editor");
-  const saved = [];
-  globalThis.window.electronAPI.setSpeakerMapping = async () => {
-    throw new Error("a cross-session self ID must not create a global mapping");
-  };
-  globalThis.window.electronAPI.updateNote = async (_id, patch) => saved.push(patch);
+  const raw = JSON.stringify([
+    {
+      source: "mic",
+      speaker: "you",
+      text: "Old words",
+      speakerName: "Original correction",
+      speakerLocked: true,
+    },
+    { source: "mic", speaker: "you", text: "New words", recorderName: "Bob Viewer" },
+  ]);
   await render(undefined, {
     note: {
       ...NOTE,
       cloud_id: "shared-note",
       owner_user_id: "alice",
-      transcript: JSON.stringify([
-        {
-          source: "mic",
-          speaker: "you",
-          text: "Old words",
-          speakerName: "Original correction",
-          speakerLocked: true,
-        },
-        { source: "mic", speaker: "you", text: "New words", recorderName: "Bob Viewer" },
-      ]),
+      transcript: raw,
     },
   });
   await click("transcript");
-  await React.act(async () => {
-    let chat;
-    walk(latest(), (node) => {
-      if (node.props.onMapSpeaker) chat = node;
-    });
-    await chat.props.onMapSpeaker("you", "You", null, undefined, "Bob Viewer");
-  });
-  const segments = JSON.parse(saved.at(-1).transcript);
-  assert.equal(segments[0].speakerName, "Original correction");
-  assert.equal(segments[1].speakerName, "Alice Owner");
-  const { buildLlmTranscript } = await import("../../src/utils/llmTranscript.ts");
-  assert.equal(
-    buildLlmTranscript(segments, {}, "Alice Owner", (key) => key),
-    "Original correction: Old words\nAlice Owner: New words"
+  const studio = transcriptStudio(latest());
+  assert.equal(studio.props.sourceTranscript, raw);
+  const mappedName = await studio.props.onMapSpeaker(
+    "you",
+    "You",
+    null,
+    undefined,
+    "Bob Viewer",
+    "You",
+    false
   );
+  assert.equal(mappedName, "Alice Owner");
+  assert.equal(transcriptStudio(latest()).props.sourceTranscript, raw);
   await unmount();
 });
 
@@ -1188,9 +1201,6 @@ test("the editor resolves the creator separately from custodian permissions and 
     { id: 1, kind: "team", cloud_space_id: "team" },
   ];
   await loadSpaces();
-  const saved = [];
-  globalThis.window.electronAPI.setSpeakerMapping = async () => {};
-  globalThis.window.electronAPI.updateNote = async (_id, patch) => saved.push(patch);
   const note = {
     ...NOTE,
     cloud_id: "shared-note",
@@ -1201,13 +1211,14 @@ test("the editor resolves the creator separately from custodian permissions and 
   };
   await render(undefined, { note });
   await click("transcript");
-  let chat;
   let dropdown;
   walk(latest(), (node) => {
-    if (node.props.onMapSpeaker) chat = node;
     if ("ownedByUser" in node.props) dropdown = node;
   });
-  assert.equal(chat.props.recorderLabel, "Alice Recorder");
+  assert.equal(transcriptStudio(latest()).props.sourceTranscript, note.transcript);
+  assert.equal(typeof transcriptStudio(latest()).props.onMapSpeaker, "function");
+  assert.equal(typeof transcriptStudio(latest()).props.onConfirmSuggestion, "function");
+  assert.equal(typeof transcriptStudio(latest()).props.onDismissSuggestion, "function");
   assert.equal(
     globalThis.__noteEditorRosterId,
     "team",
@@ -1219,14 +1230,13 @@ test("the editor resolves the creator separately from custodian permissions and 
     globalThis.__embeddedChatOptions.noteTranscript,
     /Someone other than the user took these notes/
   );
-  await React.act(async () => chat.props.onMapSpeaker("you", "You"));
-  assert.equal(JSON.parse(saved.at(-1).transcript)[0].speakerName, "Bob Viewer");
+  assert.equal(
+    globalThis.__embeddedChatOptions.noteTranscript,
+    '## Meeting Context\nSomeone other than the user took these notes ("Note taker" in the transcript).\n\nNote taker: Original words'
+  );
 
   await render(undefined, { note: { ...note, created_by_user_id: null, participants: null } });
-  walk(latest(), (node) => {
-    if (node.props.onMapSpeaker) chat = node;
-  });
-  assert.equal(chat.props.recorderLabel, "notes.speaker.noteTaker");
+  assert.equal(transcriptStudio(latest()).props.sourceTranscript, note.transcript);
   assert.equal(
     globalThis.__noteEditorRosterId,
     null,

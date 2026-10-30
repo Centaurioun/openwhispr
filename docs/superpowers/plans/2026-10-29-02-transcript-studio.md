@@ -95,11 +95,11 @@
 
 **Interfaces:** `<TranscriptStudioView noteId={number} sourceTranscript={string} canEdit={boolean} onExport={...} />`; each block uses controlled text with speaker label, optional timestamp, select/merge/split actions and Undo/Redo. Return a read-only fallback when edit permission is false.
 
-- [ ] **Step 1:** Write failing component tests: raw shown when no overlay; approved text shown by default; rename speaker and edit selected text; stable focus during updates; never render invented timestamp; read-only notes cannot be edited.
-- [ ] **Step 2:** Run component test and verify failures.
-- [ ] **Step 3:** Integrate transcript-specialized Tiptap/ProseMirror editing in existing note tab; reuse existing speaker mapping/selection UI and `RichTextEditor` patterns. Ensure controlled updates do not inadvertently reset Ctrl+Z history; group programmatic accepted edits atomically.
-- [ ] **Step 4:** Run UI tests, typecheck, and existing `test/components/meetingTranscriptChat.test.js`.
-- [ ] **Step 5:** Commit `feat(transcript): provide editable speaker-oriented transcript tab`.
+- [x] **Step 1:** Write failing component tests: raw shown when no overlay; approved text shown by default; rename speaker and edit selected text; stable focus during updates; never render invented timestamp; read-only notes cannot be edited.
+- [x] **Step 2:** Run component test and verify failures.
+- [x] **Step 3:** Integrate transcript-specialized Tiptap/ProseMirror editing in existing note tab; reuse existing speaker mapping/selection UI and `RichTextEditor` patterns. Ensure controlled updates do not inadvertently reset Ctrl+Z history; group programmatic accepted edits atomically.
+- [x] **Step 4:** Run UI tests, typecheck, and existing `test/components/meetingTranscriptChat.test.js`.
+- [x] **Step 5:** Commit `feat(transcript): provide editable speaker-oriented transcript tab`.
 
 ### Task 5: User-Triggered Progressive AI Edit Job
 
@@ -107,11 +107,11 @@
 
 **Interfaces:** `planTranscriptChunks(segments:SourceSegment[], maxInputTokens:number): TranscriptChunk[]`; `startTranscriptEditJob(input:{noteId:number; sourceHash:string; providerChoice:string; strictMode:true; selectedIds?:string[]}): AsyncIterable<TranscriptEditEvent>` with `{type:'chunkProposed'|'progress'|'warning'|'failed'|'done'; ...}` event variants; `validateTranscriptProposal(source:TranscriptChunk, candidate:ProposedChunk): {safe:boolean; warnings:string[]; edits:EditOperation[]}`.
 
-- [ ] **Step 1:** Add failing tests: no invocation on upload; explicit click starts; one-hour text yields ordered chunks; missing/duplicated source blocks, altered numbers/names and truncated output get warnings/not automatic approval; cancellation leaves approved text untouched; late response after note/account change is discarded; error resumes from remaining chunk.
-- [ ] **Step 2:** Run tests and confirm failures.
-- [ ] **Step 3:** Use existing `ReasoningService` route (not `actionProcessingStore` summary reducer) to request conservative, meaning-preserving edits, per chunk; schedule sequentially by default with small context overlap, map proposed changes back to stable IDs, and persist pending drafts separately from accepted revisions.
-- [ ] **Step 4:** Run targeted tests; verify output budget fallback, back-pressure, offline/local provider, invalid provider and consent-gated remote provider.
-- [ ] **Step 5:** Commit `feat(transcript): add progressive validated edit proposals`.
+- [x] **Step 1:** Add failing tests: no invocation on upload; explicit click starts; one-hour text yields ordered chunks; missing/duplicated source blocks, altered numbers/names and truncated output get warnings/not automatic approval; cancellation leaves approved text untouched; late response after note/account change is discarded; error resumes from remaining chunk.
+- [x] **Step 2:** Run tests and confirm failures.
+- [x] **Step 3:** Use existing `ReasoningService` route (not `actionProcessingStore` summary reducer) to request conservative, meaning-preserving edits, per chunk; schedule sequentially by default with small context overlap, map proposed changes back to stable IDs, and persist pending drafts separately from accepted revisions.
+- [x] **Step 4:** Run targeted tests; verify output budget fallback, back-pressure, offline/local provider, invalid provider and consent-gated remote provider.
+- [x] **Step 5:** Commit `feat(transcript): add progressive validated edit proposals`.
 
 ### Task 6: Review, Bulk Accept/Reject and Speaker Suggestions
 
@@ -119,11 +119,11 @@
 
 **Interfaces:** `acceptProposal(proposalId:string, expectedVersion:number):Promise<void>`; `rejectProposal(proposalId:string):void`; `acceptProposals(ids:string[], expectedVersion:number):Promise<void>`; AI speaker suggestions carry `uncertain:true` and can never auto-apply.
 
-- [ ] **Step 1:** Write failing tests: accept one and all; reject one and all; pending suggestions visible while next chunk runs; conflict after user manual edit blocks stale proposal and allows re-review; locked speaker suggestions require confirmation.
-- [ ] **Step 2:** Confirm red tests.
-- [ ] **Step 3:** Show per-change diff with type filters; separate speaker proposals from punctuation changes; map each accepted proposal to atomic edit-transaction with Undo/Redo support.
-- [ ] **Step 4:** Run targeted tests, typecheck and keyboard accessibility checks.
-- [ ] **Step 5:** Commit `feat(transcript): review individual and bulk AI corrections`.
+- [x] **Step 1:** Write failing tests: accept one and all; reject one and all; pending suggestions visible while next chunk runs; conflict after user manual edit blocks stale proposal and allows re-review; locked speaker suggestions require confirmation.
+- [x] **Step 2:** Confirm red tests.
+- [x] **Step 3:** Show per-change diff with type filters; separate speaker proposals from punctuation changes; map each accepted proposal to atomic edit-transaction with Undo/Redo support.
+- [x] **Step 4:** Run targeted tests, typecheck and keyboard accessibility checks.
+- [x] **Step 5:** Commit `feat(transcript): review individual and bulk AI corrections`.
 
 ### Task 7: Durable Version History and Restore
 
@@ -131,11 +131,11 @@
 
 **Interfaces:** `listTranscriptVersions(noteId)` shows baseline, important manual checkpoints, pre-AI and approved bulk revisions; `restoreTranscriptVersion` creates a **new** revision and leaves all old snapshots intact.
 
-- [ ] **Step 1:** Write failing tests: close/reopen retains history; compare versions; restore old version creates new history entry; undo/redo resets only for new session; no cross-note history leakage.
-- [ ] **Step 2:** Run tests and observe failure.
-- [ ] **Step 3:** Build history view and diff/restore confirmation; ensure version snapshots are compressed/deduplicated or otherwise bounded for multi-hour transcripts; create checkpoint policy not per-keystroke snapshots.
-- [ ] **Step 4:** Run targeted tests plus temporary-SQLite reopening test.
-- [ ] **Step 5:** Commit `feat(transcript): add durable version history and restore`.
+- [x] **Step 1:** Write failing tests: close/reopen retains history; compare versions; restore old version creates new history entry; undo/redo resets only for new session; no cross-note history leakage.
+- [x] **Step 2:** Run tests and observe failure.
+- [x] **Step 3:** Build history view and diff/restore confirmation; ensure version snapshots are compressed/deduplicated or otherwise bounded for multi-hour transcripts; create checkpoint policy not per-keystroke snapshots.
+- [x] **Step 4:** Run targeted tests plus temporary-SQLite reopening test.
+- [x] **Step 5:** Commit `feat(transcript): add durable version history and restore`.
 
 ### Task 8: Explicit Original/Approved Resolver, Export and Regression
 
@@ -143,11 +143,11 @@
 
 **Interfaces:** `resolveTranscriptForUse(noteId:number, purpose:'display'|'export'|'summary'|'mcp', version:'original'|'approved'):Promise<{text:string;segments:SourceSegment[];sourceHash:string}>` with explicit current permission check. For export, user selects original or approved. If no approved revision, resolve original. SRT available only for meaningful timestamps; no fabrication.
 
-- [ ] **Step 1:** Write failing tests for approved transcript default display, original export byte fidelity, summary input selection, JSON/MD/TXT/SRT formats and invalid timing; unchanged notes behave as before.
-- [ ] **Step 2:** Verify red tests.
-- [ ] **Step 3:** Implement one resolver; adapt existing `transcriptFormatter.js` and relevant UI action calls. Do not change cloud sync/update payloads by default or mutate the raw data; show stale-overlay warning if sourceHash mismatches.
-- [ ] **Step 4:** Run targeted plus existing tests for note export and transcriptions; `npm run lint`, `npm run typecheck`, `npm run i18n:check`, `npm run build:renderer`, `npm test`.
-- [ ] **Step 5:** Commit `feat(transcript): export approved or original revisions safely`.
+- [x] **Step 1:** Write failing tests for approved transcript default display, original export byte fidelity, summary input selection, JSON/MD/TXT/SRT formats and invalid timing; unchanged notes behave as before.
+- [x] **Step 2:** Verify red tests.
+- [x] **Step 3:** Implement one resolver; adapt existing `transcriptFormatter.js` and relevant UI action calls. Do not change cloud sync/update payloads by default or mutate the raw data; show stale-overlay warning if sourceHash mismatches.
+- [x] **Step 4:** Run targeted plus existing tests for note export and transcriptions; `npm run lint`, `npm run typecheck`, `npm run i18n:check`, `npm run build:renderer`, `npm test`.
+- [x] **Step 5:** Commit `feat(transcript): export approved or original revisions safely`.
 
 ### Task 9: Long-Form, Privacy, Accessibility and Recovery Acceptance
 
@@ -155,11 +155,11 @@
 
 **Interfaces:** acceptance fixtures: plain transcript 1h, multi-speaker timed segments, unsorted/missing timestamps, Turkish diacritics, named entities and decimals, speaker locks, app restart and permission changes.
 
-- [ ] **Step 1:** Write failing fixtures for 1h/2h content stability, cancellation, process crash, multiple windows, user switching, corrupt overlay fallback, and no remote text transfer without consent.
-- [ ] **Step 2:** Run targeted tests and document actual failures.
-- [ ] **Step 3:** Apply only evidence-backed repairs; write QA instructions for manual keyboard, screen reader, focus, macOS/Windows smoke tests and data migration.
-- [ ] **Step 4:** Run full suite/quality checks; verify on disposable profile, not the user's live data.
-- [ ] **Step 5:** Commit `test(transcript): enforce end-to-end editing integrity`.
+- [x] **Step 1:** Write failing fixtures for 1h/2h content stability, cancellation, process crash, multiple windows, user switching, corrupt overlay fallback, and no remote text transfer without consent.
+- [x] **Step 2:** Run targeted tests and document actual failures.
+- [x] **Step 3:** Apply only evidence-backed repairs; write QA instructions for manual keyboard, screen reader, focus, macOS/Windows smoke tests and data migration.
+- [x] **Step 4:** Run full suite/quality checks; verify on disposable profile, not the user's live data.
+- [x] **Step 5:** Commit `test(transcript): enforce end-to-end editing integrity`.
 
 ## Deliverable / Gate
 

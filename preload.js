@@ -259,6 +259,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
       transcript
     ),
   getNote: (id) => ipcRenderer.invoke("db-get-note", id),
+  getTranscriptWorkspace: (noteId) => ipcRenderer.invoke("transcript-studio-get-workspace", noteId),
+  applyTranscriptRevision: (input) => ipcRenderer.invoke("transcript-studio-apply-revision", input),
+  listTranscriptVersions: (noteId) => ipcRenderer.invoke("transcript-studio-list-versions", noteId),
+  getTranscriptVersion: (noteId, versionId) =>
+    ipcRenderer.invoke("transcript-studio-get-version", noteId, versionId),
+  restoreTranscriptVersion: (noteId, versionId, expectedVersion, expectedAccountId) =>
+    ipcRenderer.invoke(
+      "transcript-studio-restore-version",
+      noteId,
+      versionId,
+      expectedVersion,
+      expectedAccountId
+    ),
   getNotes: (noteType, limit, folderId, spaceId, spaceIds) =>
     ipcRenderer.invoke("db-get-notes", noteType, limit, folderId, spaceId, spaceIds),
   getSpaceNotes: (spaceId, limit) => ipcRenderer.invoke("db-get-space-notes", spaceId, limit),
@@ -269,7 +282,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   discardNoteUndo: (id, token) => ipcRenderer.invoke("db-discard-note-undo", id, token),
   deleteNote: (id) => ipcRenderer.invoke("db-delete-note", id),
   exportNote: (noteId, format) => ipcRenderer.invoke("export-note", noteId, format),
-  exportTranscript: (noteId, format) => ipcRenderer.invoke("export-transcript", noteId, format),
+  exportTranscript: (noteId, format, resolved) =>
+    ipcRenderer.invoke("export-transcript", noteId, format, resolved),
   exportDictionary: (words) => ipcRenderer.invoke("export-dictionary", words),
   searchNotes: (query, limit, spaceId, folderId, spaceIds) =>
     ipcRenderer.invoke("db-search-notes", query, limit, spaceId, folderId, spaceIds),

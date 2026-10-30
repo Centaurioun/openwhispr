@@ -11,12 +11,17 @@ const {
 } = require("./noteFieldSync");
 const path = require("path");
 const fs = require("fs");
-const { randomUUID } = require("crypto");
+const { randomUUID, createHash } = require("crypto");
+const { deflateRawSync, inflateRawSync } = require("zlib");
 const { isDeepStrictEqual } = require("util");
 const noteUndo = require("./noteUndo");
 const debugLogger = require("./debugLogger");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const { normalizeStoredSpeakerCount } = require("./speakerCount");
+const {
+  normalizeTranscriptSource,
+  applyEditOperations,
+} = require("../custom-features/transcript-studio/domain/transcriptStudioRuntime.cjs");
 const { parseEventTime } = require("./calendarAvailability");
 // An explicit zone marks an instant this app captured at dictation time. A
 // naive timestamp may instead be a sync artifact: upsertTranscriptionFromCloud
@@ -30,6 +35,106 @@ const {
   NOTE_ACTION_LIMITS,
 } = require("./builtinActions");
 const { normalizeSections } = require("./templatePrompts");
+
+const TRANSCRIPT_SNAPSHOT_PREFIX = "deflate-raw-v1:";
+const TRANSCRIPT_OPERATION_FIELDS = {
+  replaceText: ["kind", "segmentId", "before", "after"],
+  setSpeaker: [
+    "kind",
+    "segmentId",
+    "speakerId",
+    "speakerName",
+    "speakerLocked",
+    "suggestedName",
+    "suggestedProfileId",
+  ],
+  split: ["kind", "segmentId", "atOffset", "newId"],
+  merge: ["kind", "leftId", "rightId"],
+};
+
+function validateTranscriptOperationShape(operation) {
+  if (!operation || typeof operation !== "object" || Array.isArray(operation))
+    throw new Error("Invalid transcript edit operation");
+  const fields = TRANSCRIPT_OPERATION_FIELDS[operation.kind];
+  if (!fields || Object.keys(operation).some((key) => !fields.includes(key)))
+    throw new Error("Unsupported or malformed transcript edit operation");
+  const segmentId = (value) => typeof value === "string" && value.length > 0;
+  if (
+    operation.kind === "replaceText" &&
+    (!segmentId(operation.segmentId) ||
+      typeof operation.before !== "string" ||
+      typeof operation.after !== "string")
+  )
+    throw new Error("Invalid transcript replacement operation");
+  if (operation.kind === "setSpeaker") {
+    if (
+      !segmentId(operation.segmentId) ||
+      (operation.speakerId !== null && typeof operation.speakerId !== "string") ||
+      (operation.speakerName !== null && typeof operation.speakerName !== "string") ||
+      (operation.speakerLocked !== undefined && typeof operation.speakerLocked !== "boolean") ||
+      (operation.suggestedName !== undefined &&
+        operation.suggestedName !== null &&
+        typeof operation.suggestedName !== "string") ||
+      (operation.suggestedProfileId !== undefined &&
+        operation.suggestedProfileId !== null &&
+        !Number.isInteger(operation.suggestedProfileId))
+    )
+      throw new Error("Invalid transcript speaker operation");
+  }
+  if (
+    operation.kind === "split" &&
+    (!segmentId(operation.segmentId) ||
+      !segmentId(operation.newId) ||
+      !Number.isInteger(operation.atOffset))
+  )
+    throw new Error("Invalid transcript split operation");
+  if (
+    operation.kind === "merge" &&
+    (!segmentId(operation.leftId) ||
+      !segmentId(operation.rightId) ||
+      operation.leftId === operation.rightId)
+  )
+    throw new Error("Invalid transcript merge operation");
+}
+
+function replayTranscriptOperations(source, operations) {
+  let replayed = source;
+  for (const operation of operations) {
+    validateTranscriptOperationShape(operation);
+    const next = applyEditOperations(replayed, [operation], { actor: "user" });
+    const nextSegments = new Map(next.segments.map((segment) => [segment.id, segment]));
+    for (const previous of replayed.segments) {
+      if (!previous.speakerLocked || nextSegments.get(previous.id)?.speakerLocked) continue;
+      const lockTransferredByMerge =
+        operation.kind === "merge" &&
+        operation.rightId === previous.id &&
+        nextSegments.get(operation.leftId)?.speakerLocked;
+      if (!lockTransferredByMerge)
+        throw new Error(`Transcript speaker lock cannot be discarded for segment ${previous.id}`);
+    }
+    replayed = next;
+  }
+  return replayed;
+}
+
+function encodeTranscriptSnapshot(operations) {
+  const json = JSON.stringify(operations);
+  const compressed = deflateRawSync(Buffer.from(json, "utf8"));
+  return compressed.length + 16 < Buffer.byteLength(json, "utf8")
+    ? TRANSCRIPT_SNAPSHOT_PREFIX + compressed.toString("base64")
+    : json;
+}
+
+function decodeTranscriptSnapshot(value) {
+  if (value.startsWith(TRANSCRIPT_SNAPSHOT_PREFIX)) {
+    return JSON.parse(
+      inflateRawSync(
+        Buffer.from(value.slice(TRANSCRIPT_SNAPSHOT_PREFIX.length), "base64")
+      ).toString("utf8")
+    );
+  }
+  return JSON.parse(value);
+}
 const {
   ANALYTICS_COUNTER_VERSION,
   ANALYTICS_HISTORY_BACKFILL_VERSION,
@@ -1765,6 +1870,7 @@ class DatabaseManager {
         )
       `);
       this._initVectorChangeJournal();
+      this.initTranscriptStudioSchema();
       try {
         noteUndo.initializeNoteUndo(this.db);
         this.noteUndoReady = true;
@@ -4108,6 +4214,467 @@ class DatabaseManager {
       debugLogger.error("Error getting note", { error: error.message }, "notes");
       throw error;
     }
+  }
+
+  initTranscriptStudioSchema() {
+    const tableExists = (name) =>
+      !!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+    const hasScopeKey = (name) =>
+      this.db
+        .prepare(`PRAGMA table_info(${name})`)
+        .all()
+        .some((column) => column.name === "scope_key");
+    const hasWorkspaces = tableExists("transcript_workspaces");
+    const hasVersions = tableExists("transcript_versions");
+
+    if (!hasWorkspaces && !hasVersions) {
+      this._createTranscriptStudioScopedTables();
+      return;
+    }
+    if (
+      hasWorkspaces &&
+      hasVersions &&
+      hasScopeKey("transcript_workspaces") &&
+      hasScopeKey("transcript_versions")
+    ) {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_transcript_versions_scope
+          ON transcript_versions(note_id, scope_key, version);
+      `);
+      return;
+    }
+    if (
+      hasWorkspaces !== hasVersions ||
+      (hasWorkspaces && hasScopeKey("transcript_workspaces")) !==
+        (hasVersions && hasScopeKey("transcript_versions"))
+    ) {
+      throw new Error("Incomplete transcript overlay scope migration");
+    }
+
+    const legacyWorkspaces = tableExists("transcript_workspaces_legacy");
+    const legacyVersions = tableExists("transcript_versions_legacy");
+    if (legacyWorkspaces || legacyVersions) {
+      throw new Error("Incomplete transcript overlay scope migration");
+    }
+
+    const migrate = this.db.transaction(() => {
+      if (hasVersions)
+        this.db.exec("ALTER TABLE transcript_versions RENAME TO transcript_versions_legacy");
+      if (hasWorkspaces)
+        this.db.exec("ALTER TABLE transcript_workspaces RENAME TO transcript_workspaces_legacy");
+      this.db.exec("DROP INDEX IF EXISTS idx_transcript_versions_note");
+      this._createTranscriptStudioScopedTables();
+
+      const scopeByNote = new Map();
+      const scopeKeyForLegacyNote = (noteId) => {
+        if (scopeByNote.has(noteId)) return scopeByNote.get(noteId);
+        const note = this.db
+          .prepare(
+            `SELECT notes.account_id, spaces.kind AS space_kind
+             FROM notes LEFT JOIN spaces ON spaces.id = notes.space_id WHERE notes.id = ?`
+          )
+          .get(noteId);
+        if (!note) return null;
+        // The former note-only team overlay did not record which member authored it.
+        // Preserve it in an inaccessible legacy scope instead of leaking it to every member.
+        const scopeKey =
+          note.space_kind === "team"
+            ? "local:legacy"
+            : note.account_id
+              ? `account:${note.account_id}`
+              : "local:default";
+        scopeByNote.set(noteId, scopeKey);
+        return scopeKey;
+      };
+
+      if (hasWorkspaces) {
+        const rows = this.db
+          .prepare("SELECT * FROM transcript_workspaces_legacy ORDER BY note_id")
+          .all();
+        const insert = this.db.prepare(
+          `INSERT INTO transcript_workspaces
+            (note_id, scope_key, source_hash, source_transcript, current_version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        );
+        for (const row of rows) {
+          const scopeKey = scopeKeyForLegacyNote(row.note_id);
+          if (!scopeKey) throw new Error("Legacy transcript workspace has no accessible note");
+          insert.run(
+            row.note_id,
+            scopeKey,
+            row.source_hash,
+            row.source_transcript,
+            row.current_version,
+            row.created_at,
+            row.updated_at
+          );
+        }
+      }
+
+      if (hasVersions) {
+        const rows = this.db
+          .prepare("SELECT * FROM transcript_versions_legacy ORDER BY note_id, version")
+          .all();
+        const insert = this.db.prepare(
+          `INSERT INTO transcript_versions
+            (version_id, note_id, scope_key, version, source_hash, operations_json, description, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        );
+        for (const row of rows) {
+          const scopeKey = scopeKeyForLegacyNote(row.note_id);
+          if (!scopeKey) throw new Error("Legacy transcript version has no accessible note");
+          insert.run(
+            row.version_id,
+            row.note_id,
+            scopeKey,
+            row.version,
+            row.source_hash,
+            row.operations_json,
+            row.description,
+            row.created_at
+          );
+        }
+      }
+      if (hasVersions) this.db.exec("DROP TABLE transcript_versions_legacy");
+      if (hasWorkspaces) this.db.exec("DROP TABLE transcript_workspaces_legacy");
+    });
+    migrate();
+  }
+
+  _createTranscriptStudioScopedTables() {
+    this.db.exec(`
+      CREATE TABLE transcript_workspaces (
+        note_id INTEGER NOT NULL,
+        scope_key TEXT NOT NULL,
+        source_hash TEXT NOT NULL,
+        source_transcript TEXT NOT NULL,
+        current_version INTEGER NOT NULL DEFAULT 0 CHECK (current_version >= 0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (note_id, scope_key),
+        FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+      );
+      CREATE TABLE transcript_versions (
+        version_id TEXT PRIMARY KEY,
+        note_id INTEGER NOT NULL,
+        scope_key TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        source_hash TEXT NOT NULL,
+        operations_json TEXT NOT NULL,
+        description TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (note_id, scope_key, version),
+        FOREIGN KEY (note_id, scope_key)
+          REFERENCES transcript_workspaces(note_id, scope_key) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_transcript_versions_scope
+        ON transcript_versions(note_id, scope_key, version);
+    `);
+  }
+
+  _transcriptStudioAccessibleNote(noteId) {
+    const note = this.getNote(noteId);
+    if (!note || note.deleted_at) {
+      throw new Error("Transcript note not found or inaccessible");
+    }
+    return note;
+  }
+
+  getTranscriptEditAuthority(noteId) {
+    const note = this._transcriptStudioAccessibleNote(noteId);
+    const space = note.space_id
+      ? this.db
+          .prepare("SELECT kind, my_role, capabilities FROM spaces WHERE id = ?")
+          .get(note.space_id)
+      : null;
+    if (space?.kind === "team") {
+      let capabilities = null;
+      try {
+        capabilities = space.capabilities ? JSON.parse(space.capabilities) : null;
+      } catch {
+        throw new Error("Unable to verify transcript edit permission");
+      }
+      const canEdit =
+        typeof capabilities?.edit_notes === "boolean"
+          ? capabilities.edit_notes
+          : space.my_role === "admin" || space.my_role === "member";
+      return { canEdit, cloudId: null };
+    }
+    if (note.cloud_id && note.owner_user_id !== this.activeAccountId) {
+      return { canEdit: false, cloudId: note.cloud_id };
+    }
+    return { canEdit: true, cloudId: null };
+  }
+
+  _transcriptStudioScopeKey(note) {
+    const space = note.space_id
+      ? this.db.prepare("SELECT kind FROM spaces WHERE id = ?").get(note.space_id)
+      : null;
+    if (space?.kind === "team") {
+      if (!this.activeAccountId) throw new Error("Transcript note not found or inaccessible");
+      return `account:${this.activeAccountId}`;
+    }
+    if (note.account_id) return `account:${note.account_id}`;
+    return this.activeAccountId ? `account:${this.activeAccountId}` : "local:default";
+  }
+
+  _transcriptStudioSourceHash(transcript) {
+    return createHash("sha256").update(transcript, "utf8").digest("hex");
+  }
+
+  _transcriptStudioSnapshot(noteId, scopeKey, workspace) {
+    if (!workspace || workspace.current_version === 0) {
+      return { versionId: null, operations: [] };
+    }
+    const snapshot = this.db
+      .prepare(
+        `SELECT version_id, operations_json FROM transcript_versions
+         WHERE note_id = ? AND scope_key = ? AND version = ?`
+      )
+      .get(noteId, scopeKey, workspace.current_version);
+    if (!snapshot) throw new Error("Transcript revision snapshot is missing");
+    return {
+      versionId: snapshot.version_id,
+      operations: decodeTranscriptSnapshot(snapshot.operations_json),
+    };
+  }
+
+  getTranscriptWorkspace(noteId) {
+    const note = this._transcriptStudioAccessibleNote(noteId);
+    const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
+    const sourceHash = this._transcriptStudioSourceHash(sourceTranscript);
+    const scopeKey = this._transcriptStudioScopeKey(note);
+    const workspace = this.db
+      .prepare("SELECT * FROM transcript_workspaces WHERE note_id = ? AND scope_key = ?")
+      .get(noteId, scopeKey);
+    const snapshot = this._transcriptStudioSnapshot(noteId, scopeKey, workspace);
+    return {
+      noteId,
+      sourceTranscript,
+      originalTranscript: workspace?.source_transcript ?? sourceTranscript,
+      sourceHash,
+      baselineSourceHash: workspace?.source_hash ?? sourceHash,
+      currentVersion: workspace?.current_version ?? 0,
+      versionId: snapshot.versionId,
+      approvedOperations: snapshot.operations,
+      stale: !!workspace && workspace.source_hash !== sourceHash,
+    };
+  }
+
+  listTranscriptVersions(noteId) {
+    const note = this._transcriptStudioAccessibleNote(noteId);
+    const scopeKey = this._transcriptStudioScopeKey(note);
+    const workspace = this.db
+      .prepare("SELECT * FROM transcript_workspaces WHERE note_id = ? AND scope_key = ?")
+      .get(noteId, scopeKey);
+    if (!workspace) {
+      const note = this._transcriptStudioAccessibleNote(noteId);
+      const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
+      const sourceHash = this._transcriptStudioSourceHash(sourceTranscript);
+      return [
+        {
+          versionId: `baseline:${scopeKey}:${sourceHash}`,
+          version: 0,
+          description: "Original transcript",
+          createdAt: null,
+        },
+      ];
+    }
+    const versions = this.db
+      .prepare(
+        `SELECT version_id AS versionId, version, description, created_at AS createdAt
+         FROM transcript_versions WHERE note_id = ? AND scope_key = ? ORDER BY version ASC`
+      )
+      .all(noteId, scopeKey);
+    return [
+      {
+        versionId: `baseline:${scopeKey}:${workspace.source_hash}`,
+        version: 0,
+        description: "Original transcript",
+        createdAt: null,
+      },
+      ...versions,
+    ];
+  }
+
+  getTranscriptVersion(noteId, versionId) {
+    const note = this._transcriptStudioAccessibleNote(noteId);
+    const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
+    const sourceHash = this._transcriptStudioSourceHash(sourceTranscript);
+    const scopeKey = this._transcriptStudioScopeKey(note);
+    const workspace = this.db
+      .prepare("SELECT * FROM transcript_workspaces WHERE note_id = ? AND scope_key = ?")
+      .get(noteId, scopeKey);
+    const baselineId = `baseline:${scopeKey}:${workspace?.source_hash ?? sourceHash}`;
+    if (versionId === baselineId) {
+      return {
+        versionId,
+        version: 0,
+        description: "Original transcript",
+        createdAt: null,
+        sourceHash: workspace?.source_hash ?? sourceHash,
+        operations: [],
+      };
+    }
+    const version = this.db
+      .prepare(
+        `SELECT version_id AS versionId, version, description, created_at AS createdAt,
+                source_hash AS sourceHash, operations_json
+         FROM transcript_versions WHERE note_id = ? AND scope_key = ? AND version_id = ?`
+      )
+      .get(noteId, scopeKey, versionId);
+    if (!version) throw new Error("Transcript version not found");
+    return { ...version, operations: decodeTranscriptSnapshot(version.operations_json) };
+  }
+
+  applyTranscriptRevision({
+    noteId,
+    expectedVersion,
+    sourceHash,
+    operations,
+    description,
+    expectedAccountId,
+  }) {
+    if (!Array.isArray(operations) || typeof description !== "string") {
+      throw new Error("Invalid transcript revision");
+    }
+    const transaction = this.db.transaction(() => {
+      if (expectedAccountId !== undefined && expectedAccountId !== this.activeAccountId)
+        throw new Error("Transcript account scope changed");
+      const note = this._transcriptStudioAccessibleNote(noteId);
+      const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
+      const currentSourceHash = this._transcriptStudioSourceHash(sourceTranscript);
+      const scopeKey = this._transcriptStudioScopeKey(note);
+      if (sourceHash !== currentSourceHash) return { conflict: true };
+
+      let workspace = this.db
+        .prepare("SELECT * FROM transcript_workspaces WHERE note_id = ? AND scope_key = ?")
+        .get(noteId, scopeKey);
+      if (workspace && workspace.source_hash !== currentSourceHash) return { conflict: true };
+      const currentVersion = workspace?.current_version ?? 0;
+      if (currentVersion !== expectedVersion) return { conflict: true };
+      const previousSnapshot = this._transcriptStudioSnapshot(noteId, scopeKey, workspace);
+      const approvedOperations = [...previousSnapshot.operations, ...operations];
+      const source = normalizeTranscriptSource(sourceTranscript, currentSourceHash);
+      replayTranscriptOperations(source, approvedOperations);
+      if (!workspace) {
+        this.db
+          .prepare(
+            `INSERT INTO transcript_workspaces (note_id, scope_key, source_hash, source_transcript, current_version)
+             VALUES (?, ?, ?, ?, 0)`
+          )
+          .run(noteId, scopeKey, currentSourceHash, sourceTranscript);
+      }
+      const version = currentVersion + 1;
+      const versionId = randomUUID();
+      this.db
+        .prepare(
+          `INSERT INTO transcript_versions
+            (version_id, note_id, scope_key, version, source_hash, operations_json, description)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          versionId,
+          noteId,
+          scopeKey,
+          version,
+          currentSourceHash,
+          encodeTranscriptSnapshot(approvedOperations),
+          description
+        );
+      this.db
+        .prepare(
+          `UPDATE transcript_workspaces SET current_version = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE note_id = ? AND scope_key = ? AND current_version = ? AND source_hash = ?`
+        )
+        .run(version, noteId, scopeKey, currentVersion, currentSourceHash);
+      return {
+        version,
+        workspace: {
+          noteId,
+          sourceTranscript,
+          originalTranscript: workspace?.source_transcript ?? sourceTranscript,
+          sourceHash: currentSourceHash,
+          baselineSourceHash: currentSourceHash,
+          currentVersion: version,
+          versionId,
+          approvedOperations,
+          stale: false,
+        },
+      };
+    });
+    return transaction();
+  }
+
+  restoreTranscriptVersion(noteId, versionId, expectedVersion, expectedAccountId) {
+    const transaction = this.db.transaction(() => {
+      if (expectedAccountId !== undefined && expectedAccountId !== this.activeAccountId)
+        throw new Error("Transcript account scope changed");
+      const note = this._transcriptStudioAccessibleNote(noteId);
+      const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
+      const sourceHash = this._transcriptStudioSourceHash(sourceTranscript);
+      const scopeKey = this._transcriptStudioScopeKey(note);
+      const workspace = this.db
+        .prepare("SELECT * FROM transcript_workspaces WHERE note_id = ? AND scope_key = ?")
+        .get(noteId, scopeKey);
+      if (workspace && workspace.source_hash !== sourceHash) {
+        throw new Error("Transcript source changed; stale versions cannot be restored");
+      }
+      const currentVersion = workspace?.current_version ?? 0;
+      if (currentVersion !== expectedVersion) {
+        throw new Error("Transcript version conflict");
+      }
+      let operations;
+      if (versionId === `baseline:${scopeKey}:${workspace?.source_hash ?? sourceHash}`) {
+        operations = [];
+      } else {
+        const target = this.db
+          .prepare(
+            "SELECT operations_json, source_hash FROM transcript_versions WHERE note_id = ? AND scope_key = ? AND version_id = ?"
+          )
+          .get(noteId, scopeKey, versionId);
+        if (!target) throw new Error("Transcript version not found");
+        if (target.source_hash !== sourceHash) {
+          throw new Error("Transcript source changed; stale versions cannot be restored");
+        }
+        operations = decodeTranscriptSnapshot(target.operations_json);
+      }
+      const source = normalizeTranscriptSource(sourceTranscript, sourceHash);
+      replayTranscriptOperations(source, operations);
+      if (!workspace) {
+        this.db
+          .prepare(
+            `INSERT INTO transcript_workspaces (note_id, scope_key, source_hash, source_transcript, current_version)
+             VALUES (?, ?, ?, ?, 0)`
+          )
+          .run(noteId, scopeKey, sourceHash, sourceTranscript);
+      }
+      const version = currentVersion + 1;
+      const newVersionId = randomUUID();
+      const description = `Restored version ${versionId}`;
+      this.db
+        .prepare(
+          `INSERT INTO transcript_versions
+            (version_id, note_id, scope_key, version, source_hash, operations_json, description)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          newVersionId,
+          noteId,
+          scopeKey,
+          version,
+          sourceHash,
+          encodeTranscriptSnapshot(operations),
+          description
+        );
+      this.db
+        .prepare(
+          "UPDATE transcript_workspaces SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE note_id = ? AND scope_key = ?"
+        )
+        .run(version, noteId, scopeKey);
+      return this.getTranscriptWorkspace(noteId);
+    });
+    return transaction();
   }
 
   getNoteByCloudId(cloudId) {

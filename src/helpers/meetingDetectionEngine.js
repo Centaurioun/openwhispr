@@ -12,6 +12,7 @@ const { tagEventAttendeesJson } = require("./eventAttendees");
 const createMeetingAutoEndController = require("./meetingAutoEndController");
 const { createMeetingAudioActivityMonitor } = require("./meetingAudioActivityMonitor");
 const { broadcastToWindows } = require("./windowBroadcast");
+const { isQaCaptureDenialActive } = require("./qaCapturePolicy");
 
 const IMMINENT_THRESHOLD_MS = 5 * 60 * 1000;
 const AUTO_END_TICK_MS = 1000;
@@ -172,6 +173,10 @@ class MeetingDetectionEngine {
   }
 
   _syncAudioActivityDetector() {
+    if (isQaCaptureDenialActive()) {
+      this.audioActivityDetector.stop();
+      return;
+    }
     if (this.preferences.audioDetection || this._isAutoEndWanted()) {
       return this.audioActivityDetector.start();
     }
@@ -183,6 +188,10 @@ class MeetingDetectionEngine {
   // The process-exit fast path needs the detector even when the user has turned
   // process detection off for meeting prompts.
   _syncMeetingProcessDetector() {
+    if (isQaCaptureDenialActive()) {
+      this.meetingProcessDetector.stop();
+      return;
+    }
     if (this.preferences.processDetection || this._isAutoEndWanted()) {
       this.meetingProcessDetector.start();
       return;
@@ -574,6 +583,7 @@ class MeetingDetectionEngine {
   }
 
   async startManualMeeting(options) {
+    if (isQaCaptureDenialActive()) return { success: false, code: "QA_CAPTURE_DENIED" };
     const refusal = await this._meetingStartRefusal();
     if (refusal) {
       this.windowManager.sendMeetingStartRefused(refusal.code);
@@ -648,6 +658,7 @@ class MeetingDetectionEngine {
 
   // Resolves with the org's refusal, if any, for the caller to explain.
   async joinCalendarMeeting(eventId, trigger = "calendar-join", options) {
+    if (isQaCaptureDenialActive()) return { success: false, code: "QA_CAPTURE_DENIED" };
     const refusal = await this._meetingStartRefusal();
     if (refusal) return refusal;
     this._meetingModeActive = true;
@@ -821,6 +832,11 @@ class MeetingDetectionEngine {
   }
 
   start() {
+    if (isQaCaptureDenialActive()) {
+      this.meetingProcessDetector.stop();
+      this.audioActivityDetector.stop();
+      return;
+    }
     debugLogger.info("Meeting detection engine started", this.preferences, "meeting");
     this._syncMeetingProcessDetector();
     this._syncAudioActivityDetector();

@@ -322,9 +322,23 @@ test("untimed upload text exports without invented times or speakers", () => {
   assert.ok(md.endsWith("---\n\nThe whole lecture.\n"));
   assert.doesNotMatch(md, /00:00:00|Unknown/);
 
+  assert.equal(formatSrt(segments, {}, note), "");
   assert.equal(
-    formatSrt(segments, {}, note),
-    "1\n00:00:00,000 --> 00:02:05,400\nThe whole lecture.\n"
+    formatSrt([{ text: "Negative", timestamp: -1 }], {}, note),
+    "",
+    "negative times cannot form a valid SRT cue"
+  );
+  assert.equal(
+    formatSrt(
+      [
+        { text: "Later", timestamp: 4, speaker: "a" },
+        { text: "Earlier", timestamp: 2, speaker: "b" },
+      ],
+      {},
+      note
+    ),
+    "",
+    "out-of-order times cannot form valid SRT cue ranges"
   );
   const json = JSON.parse(formatJson(note, segments, {}));
   assert.equal(json.metadata.duration_seconds, 125);
