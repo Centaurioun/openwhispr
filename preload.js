@@ -264,8 +264,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   listTranscriptVersions: (noteId) => ipcRenderer.invoke("transcript-studio-list-versions", noteId),
   getTranscriptVersion: (noteId, versionId) =>
     ipcRenderer.invoke("transcript-studio-get-version", noteId, versionId),
-  restoreTranscriptVersion: (noteId, versionId, expectedVersion) =>
-    ipcRenderer.invoke("transcript-studio-restore-version", noteId, versionId, expectedVersion),
+  restoreTranscriptVersion: (noteId, versionId, expectedVersion, expectedAccountId) =>
+    ipcRenderer.invoke(
+      "transcript-studio-restore-version",
+      noteId,
+      versionId,
+      expectedVersion,
+      expectedAccountId
+    ),
   getNotes: (noteType, limit, folderId, spaceId, spaceIds) =>
     ipcRenderer.invoke("db-get-notes", noteType, limit, folderId, spaceId, spaceIds),
   getSpaceNotes: (spaceId, limit) => ipcRenderer.invoke("db-get-space-notes", spaceId, limit),

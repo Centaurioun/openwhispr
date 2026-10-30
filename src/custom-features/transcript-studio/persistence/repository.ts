@@ -29,8 +29,14 @@ export const transcriptStudioRepository = {
   restoreTranscriptVersion(
     noteId: number,
     versionId: string,
-    expectedVersion: number
+    expectedVersion: number,
+    expectedAccountId: string | null
   ): Promise<TranscriptStudioWorkspace> {
-    return window.electronAPI.restoreTranscriptVersion(noteId, versionId, expectedVersion);
+    return window.electronAPI.restoreTranscriptVersion(
+      noteId,
+      versionId,
+      expectedVersion,
+      expectedAccountId
+    );
   },
 };

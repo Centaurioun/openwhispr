@@ -18,6 +18,10 @@ const noteUndo = require("./noteUndo");
 const debugLogger = require("./debugLogger");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const { normalizeStoredSpeakerCount } = require("./speakerCount");
+const {
+  normalizeTranscriptSource,
+  applyEditOperations,
+} = require("../custom-features/transcript-studio/domain/transcriptStudioRuntime.cjs");
 const { parseEventTime } = require("./calendarAvailability");
 // An explicit zone marks an instant this app captured at dictation time. A
 // naive timestamp may instead be a sync artifact: upsertTranscriptionFromCloud
@@ -33,6 +37,86 @@ const {
 const { normalizeSections } = require("./templatePrompts");
 
 const TRANSCRIPT_SNAPSHOT_PREFIX = "deflate-raw-v1:";
+const TRANSCRIPT_OPERATION_FIELDS = {
+  replaceText: ["kind", "segmentId", "before", "after"],
+  setSpeaker: [
+    "kind",
+    "segmentId",
+    "speakerId",
+    "speakerName",
+    "speakerLocked",
+    "suggestedName",
+    "suggestedProfileId",
+  ],
+  split: ["kind", "segmentId", "atOffset", "newId"],
+  merge: ["kind", "leftId", "rightId"],
+};
+
+function validateTranscriptOperationShape(operation) {
+  if (!operation || typeof operation !== "object" || Array.isArray(operation))
+    throw new Error("Invalid transcript edit operation");
+  const fields = TRANSCRIPT_OPERATION_FIELDS[operation.kind];
+  if (!fields || Object.keys(operation).some((key) => !fields.includes(key)))
+    throw new Error("Unsupported or malformed transcript edit operation");
+  const segmentId = (value) => typeof value === "string" && value.length > 0;
+  if (
+    operation.kind === "replaceText" &&
+    (!segmentId(operation.segmentId) ||
+      typeof operation.before !== "string" ||
+      typeof operation.after !== "string")
+  )
+    throw new Error("Invalid transcript replacement operation");
+  if (operation.kind === "setSpeaker") {
+    if (
+      !segmentId(operation.segmentId) ||
+      (operation.speakerId !== null && typeof operation.speakerId !== "string") ||
+      (operation.speakerName !== null && typeof operation.speakerName !== "string") ||
+      (operation.speakerLocked !== undefined && typeof operation.speakerLocked !== "boolean") ||
+      (operation.suggestedName !== undefined &&
+        operation.suggestedName !== null &&
+        typeof operation.suggestedName !== "string") ||
+      (operation.suggestedProfileId !== undefined &&
+        operation.suggestedProfileId !== null &&
+        !Number.isInteger(operation.suggestedProfileId))
+    )
+      throw new Error("Invalid transcript speaker operation");
+  }
+  if (
+    operation.kind === "split" &&
+    (!segmentId(operation.segmentId) ||
+      !segmentId(operation.newId) ||
+      !Number.isInteger(operation.atOffset))
+  )
+    throw new Error("Invalid transcript split operation");
+  if (
+    operation.kind === "merge" &&
+    (!segmentId(operation.leftId) ||
+      !segmentId(operation.rightId) ||
+      operation.leftId === operation.rightId)
+  )
+    throw new Error("Invalid transcript merge operation");
+}
+
+function replayTranscriptOperations(source, operations) {
+  let replayed = source;
+  for (const operation of operations) {
+    validateTranscriptOperationShape(operation);
+    const next = applyEditOperations(replayed, [operation], { actor: "user" });
+    const nextSegments = new Map(next.segments.map((segment) => [segment.id, segment]));
+    for (const previous of replayed.segments) {
+      if (!previous.speakerLocked || nextSegments.get(previous.id)?.speakerLocked) continue;
+      const lockTransferredByMerge =
+        operation.kind === "merge" &&
+        operation.rightId === previous.id &&
+        nextSegments.get(operation.leftId)?.speakerLocked;
+      if (!lockTransferredByMerge)
+        throw new Error(`Transcript speaker lock cannot be discarded for segment ${previous.id}`);
+    }
+    replayed = next;
+  }
+  return replayed;
+}
+
 function encodeTranscriptSnapshot(operations) {
   const json = JSON.stringify(operations);
   const compressed = deflateRawSync(Buffer.from(json, "utf8"));
@@ -4443,11 +4527,20 @@ class DatabaseManager {
     return { ...version, operations: decodeTranscriptSnapshot(version.operations_json) };
   }
 
-  applyTranscriptRevision({ noteId, expectedVersion, sourceHash, operations, description }) {
+  applyTranscriptRevision({
+    noteId,
+    expectedVersion,
+    sourceHash,
+    operations,
+    description,
+    expectedAccountId,
+  }) {
     if (!Array.isArray(operations) || typeof description !== "string") {
       throw new Error("Invalid transcript revision");
     }
     const transaction = this.db.transaction(() => {
+      if (expectedAccountId !== undefined && expectedAccountId !== this.activeAccountId)
+        throw new Error("Transcript account scope changed");
       const note = this._transcriptStudioAccessibleNote(noteId);
       const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
       const currentSourceHash = this._transcriptStudioSourceHash(sourceTranscript);
@@ -4460,6 +4553,10 @@ class DatabaseManager {
       if (workspace && workspace.source_hash !== currentSourceHash) return { conflict: true };
       const currentVersion = workspace?.current_version ?? 0;
       if (currentVersion !== expectedVersion) return { conflict: true };
+      const previousSnapshot = this._transcriptStudioSnapshot(noteId, scopeKey, workspace);
+      const approvedOperations = [...previousSnapshot.operations, ...operations];
+      const source = normalizeTranscriptSource(sourceTranscript, currentSourceHash);
+      replayTranscriptOperations(source, approvedOperations);
       if (!workspace) {
         this.db
           .prepare(
@@ -4467,12 +4564,7 @@ class DatabaseManager {
              VALUES (?, ?, ?, ?, 0)`
           )
           .run(noteId, scopeKey, currentSourceHash, sourceTranscript);
-        workspace = this.db
-          .prepare("SELECT * FROM transcript_workspaces WHERE note_id = ? AND scope_key = ?")
-          .get(noteId, scopeKey);
       }
-      const previousSnapshot = this._transcriptStudioSnapshot(noteId, scopeKey, workspace);
-      const approvedOperations = [...previousSnapshot.operations, ...operations];
       const version = currentVersion + 1;
       const versionId = randomUUID();
       this.db
@@ -4501,7 +4593,7 @@ class DatabaseManager {
         workspace: {
           noteId,
           sourceTranscript,
-          originalTranscript: workspace.source_transcript,
+          originalTranscript: workspace?.source_transcript ?? sourceTranscript,
           sourceHash: currentSourceHash,
           baselineSourceHash: currentSourceHash,
           currentVersion: version,
@@ -4514,8 +4606,10 @@ class DatabaseManager {
     return transaction();
   }
 
-  restoreTranscriptVersion(noteId, versionId, expectedVersion) {
+  restoreTranscriptVersion(noteId, versionId, expectedVersion, expectedAccountId) {
     const transaction = this.db.transaction(() => {
+      if (expectedAccountId !== undefined && expectedAccountId !== this.activeAccountId)
+        throw new Error("Transcript account scope changed");
       const note = this._transcriptStudioAccessibleNote(noteId);
       const sourceTranscript = typeof note.transcript === "string" ? note.transcript : "";
       const sourceHash = this._transcriptStudioSourceHash(sourceTranscript);
@@ -4545,6 +4639,8 @@ class DatabaseManager {
         }
         operations = decodeTranscriptSnapshot(target.operations_json);
       }
+      const source = normalizeTranscriptSource(sourceTranscript, sourceHash);
+      replayTranscriptOperations(source, operations);
       if (!workspace) {
         this.db
           .prepare(

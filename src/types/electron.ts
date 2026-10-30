@@ -41,6 +41,8 @@ export interface ApplyTranscriptRevisionInput {
   sourceHash: string;
   operations: EditOperation[];
   description: string;
+  /** Renderer identity assertion only; the main process remains authoritative. */
+  expectedAccountId: string | null;
 }
 
 export type ApplyTranscriptRevisionResult =
@@ -1878,7 +1880,8 @@ declare global {
       restoreTranscriptVersion: (
         noteId: number,
         versionId: string,
-        expectedVersion: number
+        expectedVersion: number,
+        expectedAccountId: string | null
       ) => Promise<TranscriptStudioWorkspace>;
       getNotes: (
         noteType?: string | null,

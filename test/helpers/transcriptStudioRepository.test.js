@@ -3,6 +3,9 @@ const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
 const { createDb } = require("./harness/db.js");
 const { createHash } = require("node:crypto");
+const {
+  normalizeTranscriptSource,
+} = require("../../src/custom-features/transcript-studio/domain/transcriptStudioRuntime.cjs");
 
 const hash = (value) => createHash("sha256").update(value, "utf8").digest("hex");
 
@@ -10,6 +13,10 @@ function saveTranscriptNote(db, transcript, accountId = "transcript-account") {
   db.setActiveAccountId(accountId);
   const saved = db.saveNote("Transcript", "", "meeting", null, null, null, null, transcript);
   return saved.note;
+}
+
+function sourceId(raw, index = 0) {
+  return normalizeTranscriptSource(raw, hash(raw)).segments[index].id;
 }
 
 test("a missing overlay returns the current raw transcript at version zero", (t) => {
@@ -49,7 +56,7 @@ test("approved revisions never mutate notes.transcript and stale versions confli
     expectedVersion: 0,
     sourceHash: hash(raw),
     operations: [
-      { kind: "replaceText", segmentId: "source-a", before: "Original 👋", after: "Edited 👋" },
+      { kind: "replaceText", segmentId: sourceId(raw), before: "Original 👋", after: "Edited 👋" },
     ],
     description: "Correct greeting",
   };
@@ -64,11 +71,155 @@ test("approved revisions never mutate notes.transcript and stale versions confli
 
   const conflict = db.applyTranscriptRevision({
     ...input,
-    operations: [{ kind: "replaceText", segmentId: "source-a", after: "Lost" }],
+    operations: [{ kind: "replaceText", segmentId: sourceId(raw), after: "Lost" }],
   });
   assert.deepEqual(conflict, { conflict: true });
   assert.equal(db.getTranscriptWorkspace(note.id).currentVersion, 1);
   assert.equal(db.listTranscriptVersions(note.id).length, 2);
+});
+
+test("a malformed later operation rolls back the entire transcript revision", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+  const raw = '[{"text":"First"},{"text":"Second"}]';
+  const note = saveTranscriptNote(db, raw);
+  const beforeVersions = db.listTranscriptVersions(note.id).length;
+  const beforeWorkspaceCount = db.db
+    .prepare("SELECT COUNT(*) AS count FROM transcript_workspaces")
+    .get().count;
+  assert.throws(
+    () =>
+      db.applyTranscriptRevision({
+        noteId: note.id,
+        expectedVersion: 0,
+        sourceHash: hash(raw),
+        operations: [
+          { kind: "replaceText", segmentId: sourceId(raw, 0), before: "First", after: "Changed" },
+          { kind: "replaceText", segmentId: "foreign-segment", before: "Second", after: "Lost" },
+        ],
+        description: "Must roll back",
+      }),
+    /segment|operation|invalid/i
+  );
+  assert.equal(db.listTranscriptVersions(note.id).length, beforeVersions);
+  assert.equal(
+    db.db.prepare("SELECT COUNT(*) AS count FROM transcript_workspaces").get().count,
+    beforeWorkspaceCount
+  );
+  assert.equal(
+    db.db.prepare("SELECT transcript FROM notes WHERE id = ?").get(note.id).transcript,
+    raw
+  );
+});
+
+test("revision replay rejects malformed shapes, stale before text, invalid splits, nonadjacent merges and lock loss", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+  const cases = [
+    { raw: '[{"text":"A"}]', operations: [null] },
+    { raw: '[{"text":"A"}]', operations: [{ kind: "unknown", segmentId: "x" }] },
+    {
+      raw: '[{"text":"A"}]',
+      operations: [{ kind: "replaceText", segmentId: "foreign", before: "A", after: "B" }],
+    },
+    {
+      raw: '[{"text":"A"}]',
+      operations: [
+        { kind: "replaceText", segmentId: sourceId('[{"text":"A"}]'), before: "wrong", after: "B" },
+      ],
+    },
+    {
+      raw: '[{"text":"AB"}]',
+      operations: [
+        { kind: "split", segmentId: sourceId('[{"text":"AB"}]'), atOffset: 0, newId: "new" },
+      ],
+    },
+    {
+      raw: '[{"text":"AB"},{"text":"C"}]',
+      operations: [
+        {
+          kind: "split",
+          segmentId: sourceId('[{"text":"AB"},{"text":"C"}]', 0),
+          atOffset: 1,
+          newId: sourceId('[{"text":"AB"},{"text":"C"}]', 1),
+        },
+      ],
+    },
+    {
+      raw: '[{"text":"A"},{"text":"B"},{"text":"C"}]',
+      operations: [
+        {
+          kind: "merge",
+          leftId: sourceId('[{"text":"A"},{"text":"B"},{"text":"C"}]', 0),
+          rightId: sourceId('[{"text":"A"},{"text":"B"},{"text":"C"}]', 2),
+        },
+      ],
+    },
+    {
+      raw: '[{"text":"A","speakerId":"s1","speakerName":"Speaker 1","speakerLocked":true}]',
+      operations: [
+        {
+          kind: "setSpeaker",
+          segmentId: sourceId(
+            '[{"text":"A","speakerId":"s1","speakerName":"Speaker 1","speakerLocked":true}]'
+          ),
+          speakerId: "s1",
+          speakerName: "Speaker 1",
+          speakerLocked: false,
+        },
+      ],
+    },
+  ];
+  for (const { raw, operations } of cases) {
+    const note = saveTranscriptNote(db, raw);
+    const beforeVersions = db.listTranscriptVersions(note.id).length;
+    const beforeWorkspaceCount = db.db
+      .prepare("SELECT COUNT(*) AS count FROM transcript_workspaces")
+      .get().count;
+    assert.throws(() =>
+      db.applyTranscriptRevision({
+        noteId: note.id,
+        expectedVersion: 0,
+        sourceHash: hash(raw),
+        operations,
+        description: "Invalid batch",
+      })
+    );
+    assert.equal(db.listTranscriptVersions(note.id).length, beforeVersions);
+    assert.equal(
+      db.db.prepare("SELECT COUNT(*) AS count FROM transcript_workspaces").get().count,
+      beforeWorkspaceCount
+    );
+  }
+});
+
+test("a same-speaker adjacent merge transfers a right-side lock to the retained segment", (t) => {
+  const db = createDb(t);
+  if (!db) return;
+  const raw =
+    '[{"text":"Hello ","speakerId":"speaker-1","speakerName":"Speaker 1"},' +
+    '{"text":"there","speakerId":"speaker-1","speakerName":"Speaker 1","speakerLocked":true}]';
+  const note = saveTranscriptNote(db, raw);
+  const leftId = sourceId(raw, 0);
+  const rightId = sourceId(raw, 1);
+  const result = db.applyTranscriptRevision({
+    noteId: note.id,
+    expectedVersion: 0,
+    sourceHash: hash(raw),
+    operations: [{ kind: "merge", leftId, rightId }],
+    description: "Merge same speaker segments",
+  });
+  assert.equal(result.version, 1);
+  const {
+    applyEditOperations,
+    normalizeTranscriptSource,
+  } = require("../../src/custom-features/transcript-studio/domain/transcriptStudioRuntime.cjs");
+  const replayed = applyEditOperations(normalizeTranscriptSource(raw, hash(raw)), [
+    { kind: "merge", leftId, rightId },
+  ]);
+  assert.equal(replayed.segments.length, 1);
+  assert.equal(replayed.segments[0].id, leftId);
+  assert.equal(replayed.segments[0].speakerLocked, true);
 });
 
 test("version snapshots are readable for comparison and compressed without losing restore targets", (t) => {
@@ -81,7 +232,7 @@ test("version snapshots are readable for comparison and compressed without losin
     expectedVersion: 0,
     sourceHash: hash(raw),
     operations: [
-      { kind: "replaceText", segmentId: "source-0", before: raw, after: "B".repeat(32_000) },
+      { kind: "replaceText", segmentId: sourceId(raw), before: raw, after: "B".repeat(32_000) },
     ],
     description: "Long transcript cleanup",
   });
@@ -106,7 +257,7 @@ test("version snapshots are readable for comparison and compressed without losin
     operations: [
       {
         kind: "replaceText",
-        segmentId: "source-0",
+        segmentId: sourceId(raw),
         before: "B".repeat(32_000),
         after: "C".repeat(32_000),
       },
@@ -141,7 +292,14 @@ test("a source hash change marks the existing approved overlay stale", (t) => {
     noteId: note.id,
     expectedVersion: 0,
     sourceHash: hash(raw),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Meeting begins" }],
+    operations: [
+      {
+        kind: "replaceText",
+        segmentId: sourceId(raw),
+        before: "Meeting starts",
+        after: "Meeting begins",
+      },
+    ],
     description: "Correct wording",
   });
   db.updateNote(note.id, { transcript: "Meeting starts in room 2" });
@@ -214,7 +372,14 @@ test("shared team-note members keep separate overlay workspaces and version hist
     noteId: saved.note.id,
     expectedVersion: 0,
     sourceHash: hash("Team source"),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Shared edit" }],
+    operations: [
+      {
+        kind: "replaceText",
+        segmentId: sourceId("Team source"),
+        before: "Team source",
+        after: "Shared edit",
+      },
+    ],
     description: "Shared edit",
   });
 
@@ -226,7 +391,14 @@ test("shared team-note members keep separate overlay workspaces and version hist
     noteId: saved.note.id,
     expectedVersion: 0,
     sourceHash: hash("Team source"),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Member edit" }],
+    operations: [
+      {
+        kind: "replaceText",
+        segmentId: sourceId("Team source"),
+        before: "Team source",
+        after: "Member edit",
+      },
+    ],
     description: "Member edit",
   });
   assert.equal(memberEdit.version, 1);
@@ -259,7 +431,9 @@ test("account-less private notes isolate active accounts and retain a no-account
     noteId: note.id,
     expectedVersion: 0,
     sourceHash: hash(raw),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Local edit" }],
+    operations: [
+      { kind: "replaceText", segmentId: sourceId(raw), before: raw, after: "Local edit" },
+    ],
     description: "Local edit",
   });
 
@@ -272,7 +446,9 @@ test("account-less private notes isolate active accounts and retain a no-account
     noteId: note.id,
     expectedVersion: 0,
     sourceHash: hash(raw),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Second account edit" }],
+    operations: [
+      { kind: "replaceText", segmentId: sourceId(raw), before: raw, after: "Second account edit" },
+    ],
     description: "Second account edit",
   });
 
@@ -284,7 +460,9 @@ test("account-less private notes isolate active accounts and retain a no-account
     noteId: note.id,
     expectedVersion: 0,
     sourceHash: hash(raw),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Local edit" }],
+    operations: [
+      { kind: "replaceText", segmentId: sourceId(raw), before: raw, after: "Local edit" },
+    ],
     description: "Local edit",
   });
 
@@ -318,14 +496,28 @@ test("workspace revisions survive database reopen and restore appends a revision
     noteId: note.id,
     expectedVersion: 0,
     sourceHash: hash(raw),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "First edited" }],
+    operations: [
+      {
+        kind: "replaceText",
+        segmentId: sourceId(raw),
+        before: "First line",
+        after: "First edited",
+      },
+    ],
     description: "First edit",
   });
   db.applyTranscriptRevision({
     noteId: note.id,
     expectedVersion: first.version,
     sourceHash: hash(raw),
-    operations: [{ kind: "replaceText", segmentId: "source-0", after: "Second edit" }],
+    operations: [
+      {
+        kind: "replaceText",
+        segmentId: sourceId(raw),
+        before: "First edited",
+        after: "Second edit",
+      },
+    ],
     description: "Second edit",
   });
 

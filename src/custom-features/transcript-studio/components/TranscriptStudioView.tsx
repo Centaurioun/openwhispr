@@ -58,7 +58,7 @@ const EMPTY_SPEAKER_MAPPINGS: Record<string, string> = {};
 const ignoreToggle = () => {};
 type TranscriptSaveContext = {
   accountKey: string;
-  accountId: string;
+  accountId: string | null;
   noteId: number;
   sourceTranscript: string;
   sourceHash: string;
@@ -234,6 +234,7 @@ export function TranscriptStudioView({
     (state) => `${state.accountId ?? "anonymous"}:${state.authGeneration ?? "none"}`
   );
   const recoveryAccountId = usePolicyStore((state) => state.accountId ?? "anonymous");
+  const activeAccountId = usePolicyStore((state) => state.accountId);
   const recoveryKey = `transcript-studio-recovery:${recoveryAccountId}:${noteId}:${metadataRef.current.sourceHash}`;
   const proposalContextRef = useRef({
     accountKey,
@@ -263,7 +264,7 @@ export function TranscriptStudioView({
 
   const captureSaveContext = () => ({
     accountKey,
-    accountId: recoveryAccountId,
+    accountId: activeAccountId,
     noteId,
     sourceTranscript,
     sourceHash: metadataRef.current.sourceHash,
@@ -427,6 +428,7 @@ export function TranscriptStudioView({
           sourceHash: currentMetadata.sourceHash,
           operations: Array.isArray(operation) ? operation : [operation],
           description,
+          expectedAccountId: expectedContext.accountId,
         });
         if ("conflict" in result) {
           throw new Error(
@@ -770,7 +772,8 @@ export function TranscriptStudioView({
           const restored = await transcriptStudioRepository.restoreTranscriptVersion(
             restoreContext.noteId,
             targetVersionId,
-            metadataRef.current.currentVersion
+            metadataRef.current.currentVersion,
+            restoreContext.accountId
           );
           if (!saveContextIdentityIsCurrent(restoreContext)) return;
           const restoredVersions = await transcriptStudioRepository.listTranscriptVersions(
@@ -860,7 +863,8 @@ export function TranscriptStudioView({
         const restored = await transcriptStudioRepository.restoreTranscriptVersion(
           restoreContext.noteId,
           compareVersionId,
-          metadataRef.current.currentVersion
+          metadataRef.current.currentVersion,
+          restoreContext.accountId
         );
         if (!saveContextIdentityIsCurrent(restoreContext)) return;
         const source = await normalizeTranscriptSource(restored.sourceTranscript);
