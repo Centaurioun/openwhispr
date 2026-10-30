@@ -4201,14 +4201,32 @@
     "mcp": {
       "description": "在 Claude、ChatGPT 和 Cursor 中與你的筆記一起聊天、搜尋和工作。",
       "step1": "在你的 AI 工具中，使用公開 URL 新增 OpenWhispr MCP",
-      "proRequired": "升級到付費方案，以將 OpenWhispr 連接到 Claude、ChatGPT 和 Cursor。",
       "worksWith": "支援",
       "copyUrl": "複製 MCP URL",
       "copied": "已複製",
       "oauthTitle": "透過 OAuth 登入",
       "oauthDescription": "在支援 OAuth 的用戶端中新增伺服器 URL，然後登入 OpenWhispr 並授權存取。不需要 API 金鑰。",
       "apiKeyTitle": "使用 API 金鑰",
-      "apiKeyDescription": "對於支援請求標頭的用戶端，請建立具有所需權限的個人 API 金鑰，並使用以下標頭。"
+      "apiKeyDescription": "對於支援請求標頭的用戶端，請建立具有所需權限的個人 API 金鑰，並使用以下標頭。",
+      "local": {
+        "title": "本機 MCP",
+        "freeBadge": "免費",
+        "description": "在這台電腦上執行 MCP 伺服器並連接 OpenWhispr 桌面應用程式。讀取本機筆記和逐字稿時，OpenWhispr 必須保持執行。",
+        "privacy": "本機 MCP 不需要 Pro、OpenWhispr 託管 MCP 訂閱或 OpenAI API 金鑰。你的 MCP 用戶端可能會將讀取的文字傳送給該用戶端的 AI 供應商。",
+        "setup": "從 OpenWhispr 原始碼資料夾設定",
+        "buildCommandLabel": "安裝固定版本的 OpenWhispr CLI 並建置本機 MCP 伺服器",
+        "addToCodexLabel": "在 Codex 中註冊",
+        "copyCommand": "複製命令",
+        "statusLabel": "設定檢查",
+        "statusDescription": "此命令會檢查已儲存的 Codex 設定。若要確認即時連線，請讓 Codex 列出或搜尋本機筆記。",
+        "verifyCommandLabel": "檢查已儲存的伺服器設定",
+        "setupGuideLabel": "閱讀本機 MCP 設定指南"
+      },
+      "hosted": {
+        "title": "託管 MCP",
+        "description": "在 Claude、ChatGPT 和 Cursor 中與你的筆記一起聊天、搜尋和工作。"
+      },
+      "proRequired": "升級到付費方案，以將 OpenWhispr 連接到 Claude、ChatGPT 和 Cursor。"
     },
     "cli": {
       "description": "讓你的助理透過終端機存取你的筆記。",

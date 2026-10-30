@@ -736,14 +736,32 @@
     "mcp": {
       "description": "الدردشة والبحث والعمل مع ملاحظاتك داخل Claude وChatGPT وCursor.",
       "step1": "في أداة الذكاء الاصطناعي الخاصة بك، أضف OpenWhispr MCP باستخدام عنوان URL العام",
-      "proRequired": "قم بالترقية إلى خطة مدفوعة لتوصيل OpenWhispr بـ Claude وChatGPT وCursor.",
       "worksWith": "يعمل مع",
       "copyUrl": "نسخ عنوان URL لـ MCP",
       "copied": "تم النسخ",
       "oauthTitle": "تسجيل الدخول باستخدام OAuth",
       "oauthDescription": "في عميل يدعم OAuth، أضف عنوان URL للخادم، ثم سجّل الدخول إلى OpenWhispr واسمح بالوصول. لا تحتاج إلى مفتاح API.",
       "apiKeyTitle": "استخدام مفتاح API",
-      "apiKeyDescription": "للعملاء الذين يقبلون ترويسات الطلبات، أنشئ مفتاح API شخصيًا بالأذونات التي تحتاجها واستخدم الترويسة أدناه."
+      "apiKeyDescription": "للعملاء الذين يقبلون ترويسات الطلبات، أنشئ مفتاح API شخصيًا بالأذونات التي تحتاجها واستخدم الترويسة أدناه.",
+      "local": {
+        "title": "MCP المحلي",
+        "freeBadge": "مجاني",
+        "description": "شغّل خادم MCP على هذا الكمبيوتر وصِله بتطبيق OpenWhispr المكتبي. يجب أن يكون OpenWhispr قيد التشغيل لقراءة ملاحظاتك ونصوصك المحلية.",
+        "privacy": "لا يتطلب MCP المحلي اشتراك Pro أو اشتراكًا في خدمة OpenWhispr MCP المستضافة أو مفتاح OpenAI API. قد يرسل عميل MCP النص الذي يقرؤه إلى مزود الذكاء الاصطناعي الخاص به.",
+        "setup": "الإعداد من مجلد مصدر OpenWhispr",
+        "buildCommandLabel": "تثبيت CLI الخاص بـ OpenWhispr بالإصدار المحدد وإنشاء خادم MCP المحلي",
+        "addToCodexLabel": "تسجيله في Codex",
+        "copyCommand": "نسخ الأمر",
+        "statusLabel": "التحقق من الإعداد",
+        "statusDescription": "يتحقق هذا من إدخال Codex المحفوظ. للتحقق من اتصال مباشر، اطلب من Codex عرض ملاحظاتك المحلية أو البحث فيها.",
+        "verifyCommandLabel": "التحقق من إدخال الخادم المحفوظ",
+        "setupGuideLabel": "قراءة دليل إعداد MCP المحلي"
+      },
+      "hosted": {
+        "title": "MCP المستضاف",
+        "description": "الدردشة والبحث والعمل مع ملاحظاتك داخل Claude وChatGPT وCursor."
+      },
+      "proRequired": "قم بالترقية إلى خطة مدفوعة لتوصيل OpenWhispr بـ Claude وChatGPT وCursor."
     },
     "cli": {
       "description": "امنح مساعدك حق الوصول إلى ملاحظاتك من الجهاز الطرفي (terminal).",

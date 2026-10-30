@@ -52,8 +52,10 @@ export function sectionMeta(
     case "skills":
       return null;
     case "api":
-    case "mcp":
       return isPaid ? null : { kind: "badge", badge: "pro" };
+    case "mcp":
+      // Local MCP is available on every plan; Hosted MCP is separately gated in its pane.
+      return isPaid ? null : { kind: "badge", badge: "free" };
     case "cli":
       // Local mode is free; saying so is the point of surfacing it to free plans.
       return isPaid ? null : { kind: "badge", badge: "free" };

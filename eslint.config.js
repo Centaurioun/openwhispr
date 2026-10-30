@@ -5,6 +5,7 @@ module.exports = [
   {
     ignores: [
       "dist/**",
+      "tools/local-mcp/dist/**",
       "node_modules/**",
       "src/dist/**",
       "*.min.js",

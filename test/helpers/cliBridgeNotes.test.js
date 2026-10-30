@@ -191,3 +191,17 @@ test("GET /v1/notes/:id keeps Original available and fails closed for malformed 
   assert.equal(result.data.transcript_studio.approved.status, "invalid");
   assert.equal("text" in result.data.transcript_studio.approved, false);
 });
+
+test("GET /v1/notes/:id cannot read a note from a different active account", (t) => {
+  const ctx = createBridge(t);
+  if (!ctx) return;
+
+  ctx.db.setActiveAccountId("synthetic-account-a");
+  const { id } = ctx.db.saveNote("Private fixture", "Synthetic account A body").note;
+  ctx.db.setActiveAccountId("synthetic-account-b");
+
+  assert.throws(() => call(ctx.bridge, "GET", `/v1/notes/${id}`), {
+    code: "NOT_FOUND",
+    message: `Note ${id} not found`,
+  });
+});

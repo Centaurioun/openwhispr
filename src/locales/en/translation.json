@@ -4373,14 +4373,32 @@
     "mcp": {
       "description": "Chat, search, and work with your notes inside Claude, ChatGPT, and Cursor.",
       "step1": "In your AI tool, add OpenWhispr MCP using the public URL",
-      "proRequired": "Upgrade to a paid plan to connect OpenWhispr to Claude, ChatGPT, and Cursor.",
       "worksWith": "Works with",
       "copyUrl": "Copy MCP URL",
       "copied": "Copied",
       "oauthTitle": "Sign in with OAuth",
       "oauthDescription": "In a client that supports OAuth, add the server URL, then sign in to OpenWhispr and approve access. No API key needed.",
       "apiKeyTitle": "Use an API key",
-      "apiKeyDescription": "For clients that accept request headers, create a personal API key with the permissions you need and use the header below."
+      "apiKeyDescription": "For clients that accept request headers, create a personal API key with the permissions you need and use the header below.",
+      "local": {
+        "title": "Local MCP",
+        "freeBadge": "Free",
+        "description": "Run the MCP server on this computer and connect it to the OpenWhispr desktop app. OpenWhispr must be running to read your local notes and transcripts.",
+        "privacy": "Local MCP does not require Pro, an OpenWhispr hosted MCP subscription, or an OpenAI API key. Your MCP client may send the text it reads to that client’s AI provider.",
+        "setup": "Setup from the OpenWhispr source folder",
+        "buildCommandLabel": "Install the pinned OpenWhispr CLI and build the local MCP server",
+        "addToCodexLabel": "Register it with Codex",
+        "copyCommand": "Copy command",
+        "statusLabel": "Configuration check",
+        "statusDescription": "This checks the saved Codex entry. To verify a live connection, ask Codex to list or search your local notes.",
+        "verifyCommandLabel": "Check the saved server entry",
+        "setupGuideLabel": "Read Local MCP setup guide"
+      },
+      "hosted": {
+        "title": "Hosted MCP",
+        "description": "Chat, search, and work with your notes inside Claude, ChatGPT, and Cursor."
+      },
+      "proRequired": "Upgrade to a paid plan to connect OpenWhispr to Claude, ChatGPT, and Cursor."
     },
     "cli": {
       "description": "Give your assistant access to your notes from the terminal.",

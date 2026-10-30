@@ -4391,14 +4391,32 @@
     "mcp": {
       "description": "Discutez, recherchez et travaillez avec vos notes dans Claude, ChatGPT et Cursor.",
       "step1": "Dans votre outil d'IA, ajoutez OpenWhispr MCP avec l'URL publique",
-      "proRequired": "Passez à un plan payant pour connecter OpenWhispr à Claude, ChatGPT et Cursor.",
       "worksWith": "Fonctionne avec",
       "copyUrl": "Copier l'URL MCP",
       "copied": "Copié",
       "oauthTitle": "Se connecter avec OAuth",
       "oauthDescription": "Dans un client compatible OAuth, ajoutez l’URL du serveur, puis connectez-vous à OpenWhispr et autorisez l’accès. Aucune clé API requise.",
       "apiKeyTitle": "Utiliser une clé API",
-      "apiKeyDescription": "Pour les clients acceptant les en-têtes de requête, créez une clé API personnelle avec les autorisations nécessaires et utilisez l’en-tête ci-dessous."
+      "apiKeyDescription": "Pour les clients acceptant les en-têtes de requête, créez une clé API personnelle avec les autorisations nécessaires et utilisez l’en-tête ci-dessous.",
+      "local": {
+        "title": "MCP local",
+        "freeBadge": "Gratuit",
+        "description": "Exécutez le serveur MCP sur cet ordinateur et connectez-le à l’application OpenWhispr. OpenWhispr doit être ouvert pour lire les notes et transcriptions locales.",
+        "privacy": "MCP local ne nécessite ni Pro, ni abonnement au MCP hébergé d’OpenWhispr, ni clé API OpenAI. Votre client MCP peut envoyer le texte lu au fournisseur d’IA de ce client.",
+        "setup": "Configuration depuis le dossier source OpenWhispr",
+        "buildCommandLabel": "Installer la version épinglée de la CLI OpenWhispr et compiler le serveur MCP local",
+        "addToCodexLabel": "L’enregistrer dans Codex",
+        "copyCommand": "Copier la commande",
+        "statusLabel": "Vérification de la configuration",
+        "statusDescription": "Vérifie l’entrée Codex enregistrée. Pour vérifier une connexion active, demandez à Codex de lister ou rechercher vos notes locales.",
+        "verifyCommandLabel": "Vérifier l’entrée du serveur enregistrée",
+        "setupGuideLabel": "Lire le guide de configuration de MCP local"
+      },
+      "hosted": {
+        "title": "MCP hébergé",
+        "description": "Discutez, recherchez et travaillez avec vos notes dans Claude, ChatGPT et Cursor."
+      },
+      "proRequired": "Passez à un plan payant pour connecter OpenWhispr à Claude, ChatGPT et Cursor."
     },
     "cli": {
       "description": "Donnez à votre assistant l'accès à vos notes depuis le terminal.",

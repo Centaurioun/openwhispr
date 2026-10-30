@@ -4201,14 +4201,32 @@
     "mcp": {
       "description": "在 Claude、ChatGPT 和 Cursor 中与你的笔记一起聊天、搜索和工作。",
       "step1": "在你的 AI 工具中，使用公开 URL 添加 OpenWhispr MCP",
-      "proRequired": "升级到付费计划，以将 OpenWhispr 连接到 Claude、ChatGPT 和 Cursor。",
       "worksWith": "支持",
       "copyUrl": "复制 MCP URL",
       "copied": "已复制",
       "oauthTitle": "通过 OAuth 登录",
       "oauthDescription": "在支持 OAuth 的客户端中添加服务器 URL，然后登录 OpenWhispr 并授权访问。无需 API 密钥。",
       "apiKeyTitle": "使用 API 密钥",
-      "apiKeyDescription": "对于支持请求标头的客户端，请创建具有所需权限的个人 API 密钥，并使用以下标头。"
+      "apiKeyDescription": "对于支持请求标头的客户端，请创建具有所需权限的个人 API 密钥，并使用以下标头。",
+      "local": {
+        "title": "本地 MCP",
+        "freeBadge": "免费",
+        "description": "在此电脑上运行 MCP 服务器并连接 OpenWhispr 桌面应用。读取本地笔记和转录内容时，OpenWhispr 必须保持运行。",
+        "privacy": "本地 MCP 不需要 Pro、OpenWhispr 托管 MCP 订阅或 OpenAI API 密钥。你的 MCP 客户端可能会将读取的文本发送给该客户端的 AI 提供商。",
+        "setup": "从 OpenWhispr 源代码文件夹设置",
+        "buildCommandLabel": "安装固定版本的 OpenWhispr CLI 并构建本地 MCP 服务器",
+        "addToCodexLabel": "在 Codex 中注册",
+        "copyCommand": "复制命令",
+        "statusLabel": "配置检查",
+        "statusDescription": "此命令检查已保存的 Codex 配置。若要验证实时连接，请让 Codex 列出或搜索本地笔记。",
+        "verifyCommandLabel": "检查已保存的服务器配置",
+        "setupGuideLabel": "阅读本地 MCP 设置指南"
+      },
+      "hosted": {
+        "title": "托管 MCP",
+        "description": "在 Claude、ChatGPT 和 Cursor 中与你的笔记一起聊天、搜索和工作。"
+      },
+      "proRequired": "升级到付费计划，以将 OpenWhispr 连接到 Claude、ChatGPT 和 Cursor。"
     },
     "cli": {
       "description": "让你的助手通过终端访问你的笔记。",

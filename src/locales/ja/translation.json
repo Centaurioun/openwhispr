@@ -4201,14 +4201,32 @@
     "mcp": {
       "description": "Claude、ChatGPT、Cursor内でメモを使ってチャット、検索、作業ができます。",
       "step1": "AIツールで、公開URLを使用してOpenWhispr MCPを追加します",
-      "proRequired": "OpenWhispr を Claude、ChatGPT、Cursor に接続するには、有料プランへのアップグレードが必要です。",
       "worksWith": "対応アプリ",
       "copyUrl": "MCP URLをコピー",
       "copied": "コピーしました",
       "oauthTitle": "OAuth でログイン",
       "oauthDescription": "OAuth 対応のクライアントにサーバー URL を追加し、OpenWhispr にログインしてアクセスを許可します。API キーは不要です。",
       "apiKeyTitle": "API キーを使用",
-      "apiKeyDescription": "リクエストヘッダーに対応するクライアントでは、必要な権限を持つ個人用 API キーを作成し、以下のヘッダーを使用してください。"
+      "apiKeyDescription": "リクエストヘッダーに対応するクライアントでは、必要な権限を持つ個人用 API キーを作成し、以下のヘッダーを使用してください。",
+      "local": {
+        "title": "ローカル MCP",
+        "freeBadge": "無料",
+        "description": "このコンピューターで MCP サーバーを実行し、OpenWhispr デスクトップアプリに接続します。ローカルのメモや文字起こしを読むには OpenWhispr を起動しておく必要があります。",
+        "privacy": "ローカル MCP に Pro、OpenWhispr のホスト型 MCP 契約、OpenAI API キーは不要です。MCP クライアントは読み取ったテキストを、そのクライアントの AI プロバイダーへ送信する場合があります。",
+        "setup": "OpenWhispr のソースフォルダーから設定",
+        "buildCommandLabel": "固定バージョンの OpenWhispr CLI をインストールし、ローカル MCP サーバーをビルド",
+        "addToCodexLabel": "Codex に登録",
+        "copyCommand": "コマンドをコピー",
+        "statusLabel": "設定の確認",
+        "statusDescription": "保存済みの Codex 登録を確認します。接続を確認するには、Codex にローカルのメモを一覧表示または検索するよう依頼してください。",
+        "verifyCommandLabel": "保存済みサーバー登録を確認",
+        "setupGuideLabel": "ローカル MCP の設定ガイドを読む"
+      },
+      "hosted": {
+        "title": "ホスト型 MCP",
+        "description": "Claude、ChatGPT、Cursor内でメモを使ってチャット、検索、作業ができます。"
+      },
+      "proRequired": "OpenWhispr を Claude、ChatGPT、Cursor に接続するには、有料プランへのアップグレードが必要です。"
     },
     "cli": {
       "description": "ターミナルからアシスタントにメモへのアクセスを許可します。",
