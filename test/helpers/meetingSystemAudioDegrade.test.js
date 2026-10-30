@@ -25,6 +25,7 @@ function harness({ systemAudioHeard = false } = {}) {
   const handlers = {};
   const context = {
     Buffer,
+    isQaCaptureDenialActive: () => false,
     meetingSystemAudioHeard: systemAudioHeard,
     meetingSystemAudioHandover: createMeetingSystemAudioHandover({ now: () => now }),
     meetingSystemAudioWatchdog: { detachCapture: () => events.push("detach") },
