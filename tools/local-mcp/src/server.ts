@@ -2,7 +2,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
-import { localCommands, type LocalNote } from "./commands.js";
+import { createLocalCommands, localCommands, type LocalCliInvoker, type LocalNote } from "./commands.js";
+import { CliAdapterError, invokeLocalCli } from "./cliAdapter.js";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, pageTranscript } from "./transcriptPaging.js";
 
 const NOTE_LIMIT = 100;
@@ -14,6 +15,36 @@ const READ_ONLY_ANNOTATIONS = {
 } as const;
 
 type LocalCommands = typeof localCommands;
+
+export type StartupCheckResult = { ok: true } | { ok: false; reason: string };
+
+/** Verify the explicit local bridge once, discarding the bounded note-list result. */
+export async function startupCheck(invoke: LocalCliInvoker = invokeLocalCli): Promise<StartupCheckResult> {
+  try {
+    await createLocalCommands(invoke).listNotes({ limit: 1 });
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof CliAdapterError && error.code === "CLI_EXIT" && error.exitCode === 2) {
+      return {
+        ok: false,
+        reason: "The OpenWhispr desktop app or its local bridge is unavailable. Open the desktop app and retry.",
+      };
+    }
+    if (error instanceof CliAdapterError && error.code === "SPAWN_ERROR") {
+      return {
+        ok: false,
+        reason: "The local OpenWhispr CLI could not start. Install the CLI and open the desktop app, then retry.",
+      };
+    }
+    if (error instanceof CliAdapterError && error.code === "TIMEOUT") {
+      return { ok: false, reason: "The local OpenWhispr bridge timed out. Open the desktop app and retry." };
+    }
+    return {
+      ok: false,
+      reason: "The local OpenWhispr check failed. Open the desktop app and confirm its CLI version; no remote fallback was attempted.",
+    };
+  }
+}
 
 /** Creates a local-only stdio MCP server; the injectable command layer is for synthetic tests. */
 export function createMcpServer(commands: LocalCommands = localCommands): McpServer {
@@ -105,6 +136,12 @@ export function createMcpServer(commands: LocalCommands = localCommands): McpSer
 }
 
 export async function runStdioServer(): Promise<void> {
+  const check = await startupCheck();
+  if (!check.ok) {
+    process.stderr.write(`${check.reason}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const server = createMcpServer();
   await server.connect(new StdioServerTransport());
 }

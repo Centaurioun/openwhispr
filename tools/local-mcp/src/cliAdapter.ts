@@ -11,11 +11,13 @@ export type CliAdapterErrorCode =
 
 export class CliAdapterError extends Error {
   readonly code: CliAdapterErrorCode;
+  readonly exitCode?: number;
 
-  constructor(code: CliAdapterErrorCode, message: string) {
+  constructor(code: CliAdapterErrorCode, message: string, exitCode?: number) {
     super(message);
     this.name = "CliAdapterError";
     this.code = code;
+    this.exitCode = exitCode;
   }
 }
 
@@ -110,6 +112,16 @@ export function createCliInvoker({
       child.once("close", (code) => {
         if (settled) return;
         if (code !== 0) {
+          if (code === 2) {
+            finish(
+              new CliAdapterError(
+                "CLI_EXIT",
+                "The OpenWhispr desktop app or its local bridge is unavailable. Open the desktop app and retry.",
+                code,
+              ),
+            );
+            return;
+          }
           finish(new CliAdapterError("CLI_EXIT", "The local OpenWhispr CLI request failed."));
           return;
         }
