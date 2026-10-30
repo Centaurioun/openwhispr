@@ -3,6 +3,7 @@
 const { XWAYLAND_FLAG, shouldForceXWayland } = require("./src/helpers/xwayland");
 const { createHotkeyRepeatGate } = require("./src/helpers/hotkeyRepeatGate");
 const { shouldDisableGpuCompositing } = require("./src/helpers/linuxGpuCompositing");
+const { configureUserDataPath } = require("./src/helpers/userDataPath");
 
 if (shouldForceXWayland(process.argv)) {
   const { spawn } = require("child_process");
@@ -83,16 +84,7 @@ function resolveAppChannel() {
 const APP_CHANNEL = resolveAppChannel();
 process.env.OPENWHISPR_CHANNEL = APP_CHANNEL;
 
-function configureChannelUserDataPath() {
-  if (APP_CHANNEL === "production") {
-    return;
-  }
-
-  const isolatedPath = path.join(app.getPath("appData"), `OpenWhispr-${APP_CHANNEL}`);
-  app.setPath("userData", isolatedPath);
-}
-
-configureChannelUserDataPath();
+configureUserDataPath({ app, channel: APP_CHANNEL });
 
 // Load userData .env (contains DICTATION_KEY, API keys, etc.) early — before
 // hotkey registration, which needs DICTATION_KEY before the renderer loads.
