@@ -75,6 +75,14 @@ For macOS QA, setting `HOME` alone does not redirect Electron's `app.getPath("ap
 
 **Capture-denied QA guard: automated checks `PASS`; desktop feature QA `BLOCKED`.** The opt-in guard denies Electron media/display permissions, dictation start/warmup/preview and meeting start IPC paths, permission requests, and activity/native detection startup. Node 24 regression tests exercise the registered IPC handlers and verify provider and permission stubs are not called. A packaged QA run requires `OPENWHISPR_QA_DENY_CAPTURE=1`, `OPENWHISPR_CHANNEL=codexqa`, and bundle ID `com.gizmolabs.openwhispr.codexqa`; the regular builder identity remains the production ID, so pass a per-run `electron-builder` appId override and verify the resulting `Info.plist` before launch. The test bundle must also use a fresh `OPENWHISPR_QA_USER_DATA_DIR` and outbound network denial. No new desktop launch has been attempted: the earlier network-denied environment prevented Electron's renderer sandbox from initializing. Do not use `--no-sandbox`; synthetic UI and packaged app behavior remain `NOT_TESTED` until the sandboxed launch path works.
 
+### Capture guard compatibility and final local verification (2026-10-30)
+
+The capture-denied policy is shared by CommonJS Electron main/IPC modules and the Vite-evaluated ESM AudioManager. The AudioManager assertion now has a small ESM entry point so Vite does not evaluate CommonJS `require` calls inside its ESM module runner. Dedicated tests cover the opt-in and active flags; VM-based IPC tests explicitly stub the outer policy boundary and separate IPC guard tests verify denial. This keeps normal microphone behavior enabled when QA flags are absent.
+
+On the integrated local candidate, `PATH=/opt/homebrew/opt/node@24/bin:$PATH REQUIRE_DB_TESTS=1 npm run test:swift641` passed: **10,419 tests, 10,404 passed, 0 failed, 14 skipped, 1 todo**. The macOS private-pasteboard read check is asynchronous; its late-read test now polls only its private test pasteboard after the existing 600 ms delay and still requires the owner to report a read at 550 ms or later. That focused macOS test passed **4/4**, and meeting audio timeline plus capture-denial regression tests passed **39/39**.
+
+Typecheck, lint, format, i18n, and renderer build exited 0. Lint reported 11 existing warnings (including Transcript Studio hook dependency warnings); the renderer build retains existing chunk-size warnings. The isolated desktop package was not launched: Electron's renderer sandbox still cannot initialize in the available network-denied sandbox. Therefore synthetic renderer UI flows, VoiceOver, and packaged app behavior remain **`NOT_TESTED`**. No microphone, system audio, user profile, or Keychain was accessed.
+
 ## Manual accessibility and behavior checks
 
 Perform only with a disposable profile containing the synthetic fixtures listed above. Record OS/version, app commit, assistive technology and outcome for every item.

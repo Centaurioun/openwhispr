@@ -84,6 +84,17 @@ function run(binary, ...args) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function waitForPasteboardText(binary, board, expected, timeoutMs = 1500) {
+  const deadline = Date.now() + timeoutMs;
+  let value = "<none>";
+  do {
+    value = run(binary, "read", board);
+    if (value === expected) return value;
+    await sleep(50);
+  } while (Date.now() < deadline);
+  return value;
+}
+
 test(
   "macOS transcript promise reports the target's read, however late, and only that",
   { skip: process.platform !== "darwin" },
@@ -101,7 +112,7 @@ test(
           run(binary, "inspect", board).trim(),
           "session-1 org.nspasteboard.TransientType,com.openwhispr.paste-session,public.utf8-plain-text,NSStringPboardType"
         );
-        assert.equal(run(binary, "read", board), transcript);
+        assert.equal(await waitForPasteboardText(binary, board, transcript), transcript);
         const verdict = /PASTE_READ (\d+)/.exec(await owner.exited);
         assert.ok(verdict, "the read is reported");
         assert.ok(Number(verdict[1]) >= 550, `read reported at ${verdict[1]} ms`);
