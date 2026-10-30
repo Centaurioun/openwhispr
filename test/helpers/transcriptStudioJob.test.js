@@ -102,6 +102,24 @@ test("a pre-aborted job exits before context capture, remote consent, or provide
   assert.deepEqual(calls, []);
 });
 
+test("proposal baseVersion is captured when the job starts, before provider completion", async () => {
+  let liveVersion = 4;
+  const runtime = mockRuntime({
+    processChunk: async () => {
+      liveVersion = 5;
+      return JSON.stringify({
+        segments: [
+          { id: "a", text: "Ada spoke." },
+          { id: "b", text: "The total is 42." },
+        ],
+      });
+    },
+  });
+  const result = await events(startTranscriptEditJob(input(runtime, { baseVersion: liveVersion })));
+  assert.equal(result.find((event) => event.type === "chunkProposed").baseVersion, 4);
+  assert.equal(liveVersion, 5);
+});
+
 test("an abort during context validation is rechecked before provider invocation", async () => {
   const controller = new AbortController();
   let providerCalls = 0;

@@ -194,11 +194,11 @@ test("a late proposal from the old account cannot write into the new account dra
     stale: false,
   };
   const previousPolicy = usePolicyStore.getState();
-  const newAccountKey = `transcript-studio-proposals:acct-new:2:${normalized.sourceHash}`;
-  const previousStorage = happyWindow.sessionStorage.getItem(newAccountKey);
-  happyWindow.sessionStorage.removeItem(newAccountKey);
+  const newAccountKey = `transcript-studio-proposals:acct-new:24:${normalized.sourceHash}`;
+  const previousStorage = happyWindow.localStorage.getItem(newAccountKey);
+  happyWindow.localStorage.removeItem(newAccountKey);
   usePolicyStore.setState({ accountId: "acct-old", authGeneration: 1 });
-  happyWindow.sessionStorage.setItem(newAccountKey, "[]");
+  happyWindow.localStorage.setItem(newAccountKey, "[]");
 
   let releaseOldJob;
   let started = false;
@@ -235,16 +235,328 @@ test("a late proposal from the old account cannot write into the new account dra
     });
     await waitFor(() => !host.textContent.includes("Cancel AI edit"));
     await React.act(async () => {});
-    assert.equal(happyWindow.sessionStorage.getItem(newAccountKey), "[]");
+    assert.deepEqual(JSON.parse(happyWindow.localStorage.getItem(newAccountKey)), {
+      accountId: "acct-new",
+      noteId: 24,
+      sourceHash: normalized.sourceHash,
+      proposals: [],
+    });
     assert.equal(host.querySelector('[data-proposal-chunk="old-chunk"]'), null);
   } finally {
     usePolicyStore.setState(previousPolicy);
     if (previousStorage !== null) {
-      happyWindow.sessionStorage.setItem(newAccountKey, previousStorage);
+      happyWindow.localStorage.setItem(newAccountKey, previousStorage);
     } else {
-      happyWindow.sessionStorage.removeItem(newAccountKey);
+      happyWindow.localStorage.removeItem(newAccountKey);
     }
   }
+});
+
+test("completed proposals survive cancellation and renderer remount in local storage", async (t) => {
+  const raw = JSON.stringify([{ text: "Persist this proposal" }]);
+  const normalized = await normalizeTranscriptSource(raw);
+  const workspace = {
+    noteId: 25,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId: "draft-recovery-account", authGeneration: 1 });
+  const key = `transcript-studio-proposals:draft-recovery-account:25:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  happyWindow.localStorage.removeItem(key);
+  t.after(() => {
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const segmentId = normalized.segments[0].id;
+  const jobRunner = async function* () {
+    yield {
+      type: "chunkProposed",
+      chunk: {
+        id: "persisted-proposal",
+        index: 0,
+        segments: [{ id: segmentId, text: "Persist this proposal" }],
+        inputTokens: 1,
+        outputTokens: 1,
+      },
+      candidate: { segments: [{ id: segmentId, text: "Persist this proposal." }] },
+      validation: {
+        safe: true,
+        warnings: [],
+        edits: [
+          {
+            kind: "replaceText",
+            segmentId,
+            before: "Persist this proposal",
+            after: "Persist this proposal.",
+          },
+        ],
+      },
+    };
+    yield { type: "done", completed: 1, total: 1, cancelled: true };
+  };
+  const props = { noteId: 25, sourceTranscript: raw, canEdit: true, jobRunner };
+  const first = await mount(t, props, apiFor(workspace));
+  const button = [...first.host.querySelectorAll("button")].find((candidate) =>
+    candidate.textContent.includes("Edit transcript with AI")
+  );
+  await React.act(async () => button.click());
+  assert.equal(
+    await waitFor(() => !!first.host.querySelector('[data-proposal-chunk="persisted-proposal"]')),
+    true
+  );
+  assert.ok(happyWindow.localStorage.getItem(key));
+  assert.equal(happyWindow.sessionStorage.getItem(key), null);
+
+  await React.act(async () => first.root.unmount());
+  const second = await mount(
+    t,
+    { noteId: 25, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
+  assert.equal(
+    await waitFor(() => !!second.host.querySelector('[data-proposal-chunk="persisted-proposal"]')),
+    true
+  );
+});
+
+test("stored proposals with a mismatched source are discarded on load", async (t) => {
+  const raw = JSON.stringify([{ text: "Current source" }]);
+  const normalized = await normalizeTranscriptSource(raw);
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId: "draft-validation-account", authGeneration: 5 });
+  const key = `transcript-studio-proposals:draft-validation-account:26:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  happyWindow.localStorage.setItem(
+    key,
+    JSON.stringify([
+      {
+        type: "chunkProposed",
+        baseVersion: 0,
+        chunk: { id: "stale", index: 0, segments: [], inputTokens: 1, outputTokens: 1 },
+        candidate: { segments: [] },
+        validation: { safe: true, warnings: [], edits: [] },
+      },
+    ])
+  );
+  t.after(() => {
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const workspace = {
+    noteId: 26,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const { host } = await mount(
+    t,
+    { noteId: 26, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await React.act(async () => {});
+  assert.equal(host.querySelector('[data-proposal-chunk="stale"]'), null);
+  assert.doesNotMatch(host.textContent, /Pending AI proposals \(1\)/);
+});
+
+test("a forged stored safe flag is recalculated from the immutable source and candidate", async (t) => {
+  const raw = "Alice told Bob.";
+  const normalized = await normalizeTranscriptSource(raw);
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId: "forged-draft-account", authGeneration: 7 });
+  const key = `transcript-studio-proposals:forged-draft-account:27:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  const segmentId = normalized.segments[0].id;
+  happyWindow.localStorage.setItem(
+    key,
+    JSON.stringify({
+      accountId: "forged-draft-account",
+      noteId: 27,
+      sourceHash: normalized.sourceHash,
+      proposals: [
+        {
+          type: "chunkProposed",
+          baseVersion: 0,
+          chunk: {
+            id: "forged",
+            index: 0,
+            segments: [{ id: segmentId, text: raw }],
+            inputTokens: 1,
+            outputTokens: 1,
+          },
+          candidate: { segments: [{ id: segmentId, text: "Bob told Alice." }] },
+          validation: {
+            safe: true,
+            warnings: [],
+            edits: [{ kind: "replaceText", segmentId, before: raw, after: "Bob told Alice." }],
+          },
+        },
+      ],
+    })
+  );
+  t.after(() => {
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const workspace = {
+    noteId: 27,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const { host } = await mount(
+    t,
+    { noteId: 27, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
+  assert.equal(await waitFor(() => !!host.querySelector('[data-proposal-chunk="forged"]')), true);
+  const acceptAll = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Accept all"
+  );
+  assert.equal(
+    acceptAll.disabled,
+    true,
+    "stored safe/warnings/edits fields must not authorize bulk acceptance"
+  );
+  assert.ok(host.querySelector('[aria-label="Accept proposal forged after manual review"]'));
+  assert.match(host.textContent, /content|manually review/i);
+});
+
+test("corrupt saved proposals show a recovery warning instead of disappearing silently", async (t) => {
+  const raw = "Recoverable source";
+  const normalized = await normalizeTranscriptSource(raw);
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId: "corrupt-draft-account", authGeneration: 8 });
+  const key = `transcript-studio-proposals:corrupt-draft-account:28:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  happyWindow.localStorage.setItem(key, "{broken-json");
+  t.after(() => {
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const workspace = {
+    noteId: 28,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const { host } = await mount(
+    t,
+    { noteId: 28, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
+  assert.equal(
+    await waitFor(() => /saved AI proposals could not be (recovered|read)/i.test(host.textContent)),
+    true,
+    host.textContent
+  );
+  assert.equal(host.querySelector("textarea").value, raw);
+});
+
+test("proposal storage write failures remain visible while the proposal stays available in memory", async (t) => {
+  const raw = "Proposal must remain visible";
+  const normalized = await normalizeTranscriptSource(raw);
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId: "blocked-storage-account", authGeneration: 9 });
+  const key = `transcript-studio-proposals:blocked-storage-account:29:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  happyWindow.localStorage.removeItem(key);
+  const storage = happyWindow.localStorage;
+  const originalSetItemDescriptor = Object.getOwnPropertyDescriptor(storage, "setItem");
+  const originalSetItem = storage.setItem;
+  Object.defineProperty(storage, "setItem", {
+    configurable: true,
+    writable: true,
+    value: function (storageKey, value) {
+      if (storageKey === key) throw new Error("quota exceeded");
+      return originalSetItem.call(this, storageKey, value);
+    },
+  });
+  t.after(() => {
+    if (originalSetItemDescriptor)
+      Object.defineProperty(storage, "setItem", originalSetItemDescriptor);
+    else delete storage.setItem;
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const segmentId = normalized.segments[0].id;
+  const workspace = {
+    noteId: 29,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const jobRunner = async function* () {
+    yield {
+      type: "chunkProposed",
+      chunk: {
+        id: "memory-proposal",
+        index: 0,
+        segments: [{ id: segmentId, text: raw }],
+        inputTokens: 1,
+        outputTokens: 1,
+      },
+      candidate: { segments: [{ id: segmentId, text: `${raw}.` }] },
+      validation: {
+        safe: true,
+        warnings: [],
+        edits: [{ kind: "replaceText", segmentId, before: raw, after: `${raw}.` }],
+      },
+    };
+    yield { type: "done", completed: 1, total: 1, cancelled: true };
+  };
+  const { host } = await mount(
+    t,
+    { noteId: 29, sourceTranscript: raw, canEdit: true, jobRunner },
+    apiFor(workspace)
+  );
+  const button = [...host.querySelectorAll("button")].find((candidate) =>
+    candidate.textContent.includes("Edit transcript with AI")
+  );
+  await React.act(async () => button.click());
+  assert.equal(
+    await waitFor(() => !!host.querySelector('[data-proposal-chunk="memory-proposal"]')),
+    true
+  );
+  assert.equal(
+    await waitFor(() => /could not be saved on this device/i.test(host.textContent)),
+    true,
+    host.textContent
+  );
+  assert.ok(host.querySelector('[data-proposal-chunk="memory-proposal"]'));
 });
 
 test("the approved revision is shown by default and stale overlays fall back to raw", async (t) => {
@@ -1439,13 +1751,13 @@ test("proposal acceptance is locked during another pending save and retains the 
   };
   const previousPolicy = usePolicyStore.getState();
   usePolicyStore.setState({ accountId: "proposal-overlap-account", authGeneration: 3 });
-  const proposalKey = `transcript-studio-proposals:proposal-overlap-account:3:66:${normalized.sourceHash}`;
-  const previousProposalDraft = happyWindow.sessionStorage.getItem(proposalKey);
-  happyWindow.sessionStorage.removeItem(proposalKey);
+  const proposalKey = `transcript-studio-proposals:proposal-overlap-account:66:${normalized.sourceHash}`;
+  const previousProposalDraft = happyWindow.localStorage.getItem(proposalKey);
+  happyWindow.localStorage.removeItem(proposalKey);
   t.after(() => {
     usePolicyStore.setState(previousPolicy);
-    if (previousProposalDraft === null) happyWindow.sessionStorage.removeItem(proposalKey);
-    else happyWindow.sessionStorage.setItem(proposalKey, previousProposalDraft);
+    if (previousProposalDraft === null) happyWindow.localStorage.removeItem(proposalKey);
+    else happyWindow.localStorage.setItem(proposalKey, previousProposalDraft);
   });
   const operation = {
     kind: "replaceText",
@@ -1495,7 +1807,7 @@ test("proposal acceptance is locked during another pending save and retains the 
   });
   const accept = host.querySelector('button[aria-label="Accept proposal overlap-proposal"]');
   if (accept && !accept.disabled) await React.act(async () => accept.click());
-  const storedBeforeSave = JSON.parse(happyWindow.sessionStorage.getItem(proposalKey));
+  const storedBeforeSave = JSON.parse(happyWindow.localStorage.getItem(proposalKey)).proposals;
   assert.equal(
     storedBeforeSave.some((proposal) => proposal.chunk.id === "overlap-proposal"),
     true
@@ -1509,7 +1821,7 @@ test("proposal acceptance is locked during another pending save and retains the 
   });
   assert.equal(writes.length, 1);
   assert.ok(host.querySelector('[data-proposal-chunk="overlap-proposal"]'));
-  const storedAfterSave = JSON.parse(happyWindow.sessionStorage.getItem(proposalKey));
+  const storedAfterSave = JSON.parse(happyWindow.localStorage.getItem(proposalKey)).proposals;
   assert.equal(
     storedAfterSave.some((proposal) => proposal.chunk.id === "overlap-proposal"),
     true
@@ -1668,9 +1980,15 @@ test("invalid recovery JSON warns while retaining the persisted transcript", asy
   const raw = '[{"text":"Persisted after malformed recovery"}]';
   const normalized = await normalizeTranscriptSource(raw);
   const workspace = {
-    noteId: 69, sourceTranscript: raw, originalTranscript: raw,
-    sourceHash: normalized.sourceHash, baselineSourceHash: normalized.sourceHash,
-    currentVersion: 0, versionId: null, approvedOperations: [], stale: false,
+    noteId: 69,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
   };
   const previousPolicy = usePolicyStore.getState();
   usePolicyStore.setState({ accountId: "recovery-read-account", authGeneration: 9 });
@@ -1682,7 +2000,11 @@ test("invalid recovery JSON warns while retaining the persisted transcript", asy
     if (previousRecovery === null) happyWindow.localStorage.removeItem(recoveryKey);
     else happyWindow.localStorage.setItem(recoveryKey, previousRecovery);
   });
-  const { host } = await mount(t, { noteId: 69, sourceTranscript: raw, canEdit: true }, apiFor(workspace));
+  const { host } = await mount(
+    t,
+    { noteId: 69, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
   assert.equal(host.querySelector("textarea").value, "Persisted after malformed recovery");
   assert.match(host.textContent, /could not be read/i);
 });
@@ -1691,9 +2013,15 @@ test("recovery storage read errors warn while retaining the persisted transcript
   const raw = '[{"text":"Persisted after recovery read error"}]';
   const normalized = await normalizeTranscriptSource(raw);
   const workspace = {
-    noteId: 70, sourceTranscript: raw, originalTranscript: raw,
-    sourceHash: normalized.sourceHash, baselineSourceHash: normalized.sourceHash,
-    currentVersion: 0, versionId: null, approvedOperations: [], stale: false,
+    noteId: 70,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
   };
   const previousPolicy = usePolicyStore.getState();
   usePolicyStore.setState({ accountId: "recovery-read-error-account", authGeneration: 2 });
@@ -1710,11 +2038,16 @@ test("recovery storage read errors warn while retaining the persisted transcript
     },
   });
   t.after(() => {
-    if (originalGetItemDescriptor) Object.defineProperty(store, "getItem", originalGetItemDescriptor);
+    if (originalGetItemDescriptor)
+      Object.defineProperty(store, "getItem", originalGetItemDescriptor);
     else delete store.getItem;
     usePolicyStore.setState(previousPolicy);
   });
-  const { host } = await mount(t, { noteId: 70, sourceTranscript: raw, canEdit: true }, apiFor(workspace));
+  const { host } = await mount(
+    t,
+    { noteId: 70, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
   assert.equal(host.querySelector("textarea").value, "Persisted after recovery read error");
   assert.match(host.textContent, /could not be read/i);
 });

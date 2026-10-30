@@ -7,6 +7,8 @@ import {
 } from "../domain/editOperations";
 import { normalizeTranscriptSource } from "../domain/normalizeSource";
 import type { SourceSegment } from "../domain/types";
+import { validateTranscriptProposal, type ProposedChunk } from "../domain/validateProposal";
+import type { TranscriptChunk } from "../process/chunkPlanner";
 import { transcriptStudioRepository } from "../persistence/repository";
 import {
   createTranscriptStudioStore,
@@ -72,8 +74,141 @@ type PendingTranscriptWrite = TranscriptSaveContext & {
 const operationSnapshot = (workspace: TranscriptEditWorkspace) => JSON.stringify(workspace);
 const workspaceText = (workspace: TranscriptEditWorkspace) =>
   workspace.segments.map((segment) => segment.text).join("\n");
-const proposalDraftKey = (accountKey: string, noteId: number, sourceHash: string) =>
-  `transcript-studio-proposals:${accountKey}:${noteId}:${sourceHash}`;
+const proposalDraftKey = (accountId: string, noteId: number, sourceHash: string) =>
+  `transcript-studio-proposals:${accountId}:${noteId}:${sourceHash}`;
+type ProposalDraftReadResult = {
+  proposals: PendingTranscriptProposal[];
+  warning?: string;
+};
+const readProposalDraft = (
+  key: string,
+  identity: { accountId: string; noteId: number; sourceHash: string },
+  sourceSegments: SourceSegment[]
+): ProposalDraftReadResult => {
+  try {
+    const raw = window.localStorage?.getItem(key);
+    if (!raw) return { proposals: [] };
+    const envelope: unknown = JSON.parse(raw);
+    if (!envelope || typeof envelope !== "object")
+      return {
+        proposals: [],
+        warning:
+          "Saved AI proposals could not be recovered from this device. The transcript source is unchanged.",
+      };
+    const draft = envelope as Record<string, unknown>;
+    if (
+      draft.accountId !== identity.accountId ||
+      draft.noteId !== identity.noteId ||
+      draft.sourceHash !== identity.sourceHash ||
+      !Array.isArray(draft.proposals)
+    )
+      return {
+        proposals: [],
+        warning:
+          "Saved AI proposals did not match this account, note, or transcript source and were not loaded.",
+      };
+    const sourceById = new Map(sourceSegments.map((segment) => [segment.id, segment]));
+    let invalidEntries = 0;
+    const proposals = draft.proposals.flatMap((value): PendingTranscriptProposal[] => {
+      if (!value || typeof value !== "object") {
+        invalidEntries += 1;
+        return [];
+      }
+      const proposal = value as Record<string, unknown>;
+      const chunk = proposal.chunk as Record<string, unknown> | undefined;
+      const candidate = proposal.candidate as Record<string, unknown> | undefined;
+      const structurallyValid =
+        proposal.type === "chunkProposed" &&
+        Number.isInteger(proposal.baseVersion) &&
+        !!chunk &&
+        typeof chunk.id === "string" &&
+        Number.isInteger(chunk.index) &&
+        typeof chunk.inputTokens === "number" &&
+        typeof chunk.outputTokens === "number" &&
+        Array.isArray(chunk.segments) &&
+        chunk.segments.every(
+          (segment) =>
+            !!segment &&
+            typeof segment.id === "string" &&
+            sourceById.has(segment.id) &&
+            typeof segment.text === "string" &&
+            (segment.parentSegmentId === undefined ||
+              (typeof segment.parentSegmentId === "string" &&
+                Number.isInteger(segment.partIndex) &&
+                Number.isInteger(segment.partCount)))
+        ) &&
+        Array.isArray(candidate?.segments) &&
+        candidate.segments.every(
+          (segment) =>
+            !!segment &&
+            typeof segment.id === "string" &&
+            sourceById.has(segment.id) &&
+            typeof segment.text === "string"
+        );
+      if (!structurallyValid || !chunk || !candidate || !Array.isArray(chunk.segments)) {
+        invalidEntries += 1;
+        return [];
+      }
+      const reconstructedSegments: TranscriptChunk["segments"] = chunk.segments.map(
+        (storedSegment) => {
+          const row = storedSegment as Record<string, unknown>;
+          const source = sourceById.get(row.id as string)!;
+          return {
+            ...source,
+            ...(row.contextOnly === true ? { contextOnly: true } : {}),
+            ...(typeof row.parentSegmentId === "string"
+              ? {
+                  parentSegmentId: row.parentSegmentId,
+                  partIndex: row.partIndex as number,
+                  partCount: row.partCount as number,
+                }
+              : {}),
+          };
+        }
+      );
+      const reconstructedChunk = {
+        ...(chunk as unknown as TranscriptChunk),
+        segments: reconstructedSegments,
+      };
+      const proposed = candidate as unknown as ProposedChunk;
+      return [
+        {
+          ...(proposal as unknown as PendingTranscriptProposal),
+          chunk: reconstructedChunk,
+          candidate: proposed,
+          validation: validateTranscriptProposal(reconstructedChunk, proposed),
+        },
+      ];
+    });
+    return {
+      proposals,
+      ...(invalidEntries > 0
+        ? {
+            warning:
+              "Some saved AI proposals were invalid and could not be recovered. The transcript source is unchanged.",
+          }
+        : {}),
+    };
+  } catch {
+    return {
+      proposals: [],
+      warning:
+        "Saved AI proposals could not be read from this device. Keep this window open and check local storage before closing.",
+    };
+  }
+};
+const writeProposalDraft = (
+  key: string,
+  identity: { accountId: string; noteId: number; sourceHash: string },
+  proposals: PendingTranscriptProposal[]
+) => {
+  try {
+    window.localStorage?.setItem(key, JSON.stringify({ ...identity, proposals }));
+    return true;
+  } catch {
+    return false;
+  }
+};
 const readLocalRecovery = (key: string): string | null => {
   return window.localStorage?.getItem(key) ?? null;
 };
@@ -211,6 +346,7 @@ export function TranscriptStudioView({
   const session = sessionRef.current;
   const workspace = useStore(session, (state: TranscriptStudioSessionState) => state.workspace);
   const metadataRef = useRef({ sourceHash: "", currentVersion: 0, versionId: "" });
+  const sourceSegmentsRef = useRef<SourceSegment[]>([]);
   const versionForSnapshotRef = useRef(new Map<string, string>());
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const failedOperationRef = useRef<PendingTranscriptWrite | null>(null);
@@ -222,6 +358,10 @@ export function TranscriptStudioView({
   const [jobMessage, setJobMessage] = useState("");
   const [jobProgress, setJobProgress] = useState("");
   const [proposals, setProposals] = useState<PendingTranscriptProposal[]>([]);
+  const [proposalDraftScopeKey, setProposalDraftScopeKey] = useState("");
+  const [proposalRecoveryWarning, setProposalRecoveryWarning] = useState("");
+  const [proposalPersistenceWarning, setProposalPersistenceWarning] = useState("");
+  const skipProposalPersistRef = useRef<PendingTranscriptProposal[] | null>(null);
   const [currentVersion, setCurrentVersion] = useState(0);
   const [versions, setVersions] = useState<TranscriptStudioVersionMeta[]>([]);
   const [compareVersionId, setCompareVersionId] = useState("");
@@ -248,19 +388,44 @@ export function TranscriptStudioView({
     noteId,
     sourceTranscript,
     sourceHash: metadataRef.current.sourceHash,
-    storageKey: proposalDraftKey(accountKey, noteId, metadataRef.current.sourceHash),
+    storageKey: proposalDraftKey(recoveryAccountId, noteId, metadataRef.current.sourceHash),
   };
 
   useEffect(() => () => jobControllerRef.current?.abort(), [accountKey, noteId, sourceTranscript]);
   useEffect(() => {
+    if (loading || !metadataRef.current.sourceHash) return;
     const key = proposalContextRef.current.storageKey;
-    try {
-      const saved = window.sessionStorage?.getItem(key);
-      setProposals(saved ? JSON.parse(saved) : []);
-    } catch {
-      setProposals([]);
+    const identity = {
+      accountId: recoveryAccountId,
+      noteId,
+      sourceHash: metadataRef.current.sourceHash,
+    };
+    const result = readProposalDraft(key, identity, sourceSegmentsRef.current);
+    skipProposalPersistRef.current = result.proposals;
+    setProposalDraftScopeKey(key);
+    setProposals(result.proposals);
+    setProposalRecoveryWarning(result.warning ?? "");
+    setProposalPersistenceWarning("");
+  }, [loading, recoveryAccountId, noteId, metadataRef.current.sourceHash, session]);
+
+  useEffect(() => {
+    const key = proposalContextRef.current.storageKey;
+    if (loading || !metadataRef.current.sourceHash || proposalDraftScopeKey !== key) return;
+    if (skipProposalPersistRef.current === proposals) {
+      skipProposalPersistRef.current = null;
+      return;
     }
-  }, [accountKey, noteId, metadataRef.current.sourceHash]);
+    const saved = writeProposalDraft(
+      key,
+      { accountId: recoveryAccountId, noteId, sourceHash: metadataRef.current.sourceHash },
+      proposals
+    );
+    setProposalPersistenceWarning(
+      saved
+        ? ""
+        : "Pending AI proposals could not be saved on this device. They remain available in this window, but may be lost if it closes."
+    );
+  }, [loading, proposalDraftScopeKey, proposals, recoveryAccountId, noteId]);
 
   const captureSaveContext = () => ({
     accountKey,
@@ -277,7 +442,7 @@ export function TranscriptStudioView({
     const active = proposalContextRef.current;
     return (
       liveAccountKey === context.accountKey &&
-      (policy.accountId ?? "anonymous") === context.accountId &&
+      (policy.accountId ?? "anonymous") === (context.accountId ?? "anonymous") &&
       active.noteId === context.noteId &&
       active.sourceTranscript === context.sourceTranscript &&
       metadataRef.current.sourceHash === context.sourceHash
@@ -313,6 +478,7 @@ export function TranscriptStudioView({
     setError("");
     void (async () => {
       const source = await normalizeTranscriptSource(sourceTranscript);
+      sourceSegmentsRef.current = source.segments;
       const saved = await transcriptStudioRepository.getTranscriptWorkspace(noteId);
       const savedVersions = await transcriptStudioRepository.listTranscriptVersions(noteId);
       if (!active) return;
@@ -915,6 +1081,7 @@ export function TranscriptStudioView({
     setJobRunning(true);
     setJobMessage("");
     const jobContext = { ...proposalContextRef.current };
+    const jobBaseVersion = metadataRef.current.currentVersion;
     const isJobContextCurrent = () => {
       const current = proposalContextRef.current;
       const policy = usePolicyStore.getState();
@@ -928,20 +1095,7 @@ export function TranscriptStudioView({
         current.storageKey === jobContext.storageKey
       );
     };
-    const removeJobDraft = () => {
-      try {
-        window.sessionStorage?.removeItem(jobContext.storageKey);
-      } catch {
-        /* ignore unavailable storage */
-      }
-    };
     const settings = getSettings();
-    try {
-      const saved = window.sessionStorage?.getItem(jobContext.storageKey);
-      if (saved) setProposals(JSON.parse(saved));
-    } catch {
-      setProposals([]);
-    }
     const providerChoice =
       settings.cleanupMode === "providers"
         ? settings.cleanupProvider
@@ -955,6 +1109,7 @@ export function TranscriptStudioView({
       for await (const event of runJob({
         noteId,
         sourceHash: jobContext.sourceHash,
+        baseVersion: jobBaseVersion,
         providerChoice,
         strictMode: true,
         selectedIds: selectedSegmentIds.size ? [...selectedSegmentIds] : undefined,
@@ -962,30 +1117,23 @@ export function TranscriptStudioView({
         resumeFromChunk,
       })) {
         if (!isJobContextCurrent()) {
-          removeJobDraft();
           break;
         }
         if (event.type === "chunkProposed") {
           setProposals((previous) => {
             if (!isJobContextCurrent()) {
-              removeJobDraft();
               return previous;
             }
             const next = [
               ...previous.filter((item) => item.chunk.id !== event.chunk.id),
               {
                 ...event,
-                baseVersion: metadataRef.current.currentVersion,
+                baseVersion: event.baseVersion ?? jobBaseVersion,
                 ...(event.validation.edits.some((edit) => edit.kind === "setSpeaker")
                   ? { uncertain: true as const }
                   : {}),
               },
             ];
-            try {
-              window.sessionStorage?.setItem(jobContext.storageKey, JSON.stringify(next));
-            } catch {
-              /* proposals remain in this session */
-            }
             return next;
           });
         } else if (event.type === "progress") {
@@ -994,7 +1142,6 @@ export function TranscriptStudioView({
         } else if (event.type === "warning") {
           setJobMessage(event.message);
           if (/account, note, or source changed/i.test(event.message)) {
-            removeJobDraft();
             if (isJobContextCurrent()) setProposals([]);
           }
         } else if (event.type === "failed") {
@@ -1013,7 +1160,18 @@ export function TranscriptStudioView({
         jobControllerRef.current = null;
       }
     }
-  }, [canEdit, jobRunning, jobRunner, loading, noteId, resumeFromChunk, selectedSegmentIds, stale]);
+  }, [
+    canEdit,
+    jobRunning,
+    jobRunner,
+    loading,
+    noteId,
+    recoveryAccountId,
+    resumeFromChunk,
+    selectedSegmentIds,
+    session,
+    stale,
+  ]);
 
   const acceptProposals = useCallback(
     async (ids: string[], operations: EditOperation[]) => {
@@ -1031,7 +1189,6 @@ export function TranscriptStudioView({
         return;
       const context = captureSaveContext();
       if (!beginSaveLock(context)) return;
-      const contextProposalsKey = proposalContextRef.current.storageKey;
       let applied = false;
       try {
         session.getState().apply(operations, { actor: "user" });
@@ -1054,11 +1211,6 @@ export function TranscriptStudioView({
         setProposals((previous) => {
           if (!saveContextIdentityIsCurrent(context)) return previous;
           const next = previous.filter((proposal) => !ids.includes(proposal.chunk.id));
-          try {
-            window.sessionStorage?.setItem(contextProposalsKey, JSON.stringify(next));
-          } catch {
-            /* session-only */
-          }
           return next;
         });
         setError("");
@@ -1075,40 +1227,47 @@ export function TranscriptStudioView({
         releaseSaveLock(context);
       }
     },
-    [beginSaveLock, canEdit, error, persist, proposals, saving, session, stale]
+    [
+      beginSaveLock,
+      canEdit,
+      error,
+      noteId,
+      persist,
+      proposals,
+      recoveryAccountId,
+      saving,
+      session,
+      stale,
+    ]
   );
 
-  const rejectProposals = useCallback((ids: string[]) => {
-    setProposals((previous) => {
-      const next = previous.filter((proposal) => !ids.includes(proposal.chunk.id));
-      try {
-        window.sessionStorage?.setItem(proposalContextRef.current.storageKey, JSON.stringify(next));
-      } catch {
-        /* session-only */
-      }
-      return next;
-    });
-  }, []);
+  const rejectProposals = useCallback(
+    (ids: string[]) => {
+      setProposals((previous) => {
+        const next = previous.filter((proposal) => !ids.includes(proposal.chunk.id));
+        return next;
+      });
+    },
+    [noteId, recoveryAccountId]
+  );
 
-  const rereviewProposal = useCallback((id: string, edits: EditOperation[]) => {
-    setProposals((previous) => {
-      const next = previous.map((proposal) =>
-        proposal.chunk.id === id
-          ? {
-              ...proposal,
-              baseVersion: metadataRef.current.currentVersion,
-              validation: { ...proposal.validation, edits },
-            }
-          : proposal
-      );
-      try {
-        window.sessionStorage?.setItem(proposalContextRef.current.storageKey, JSON.stringify(next));
-      } catch {
-        /* session-only */
-      }
-      return next;
-    });
-  }, []);
+  const rereviewProposal = useCallback(
+    (id: string, edits: EditOperation[]) => {
+      setProposals((previous) => {
+        const next = previous.map((proposal) =>
+          proposal.chunk.id === id
+            ? {
+                ...proposal,
+                baseVersion: metadataRef.current.currentVersion,
+                validation: { ...proposal.validation, edits },
+              }
+            : proposal
+        );
+        return next;
+      });
+    },
+    [noteId, recoveryAccountId]
+  );
 
   if (loading)
     return <div className="px-4 py-6 text-sm text-muted-foreground">Loading transcript…</div>;
@@ -1208,6 +1367,16 @@ export function TranscriptStudioView({
       {!!jobMessage && (
         <p role="alert" className="mb-3 text-sm">
           {jobMessage}
+        </p>
+      )}
+      {!!proposalRecoveryWarning && (
+        <p role="alert" className="mb-3 text-sm">
+          {proposalRecoveryWarning}
+        </p>
+      )}
+      {!!proposalPersistenceWarning && (
+        <p role="alert" className="mb-3 text-sm">
+          {proposalPersistenceWarning}
         </p>
       )}
       {!!jobProgress && (

@@ -246,6 +246,54 @@ test("bulk acceptance confirms every uncertain speaker proposal before any are p
   );
 });
 
+test("unsafe proposals are excluded from bulk accept and need explicit individual review", async (t) => {
+  const unsafe = {
+    ...proposal("unsafe", "source-0", "Current source", "A meaning-changing suggestion"),
+    validation: {
+      safe: false,
+      warnings: ["Possible content omission; review this proposal manually."],
+      edits: [
+        {
+          kind: "replaceText",
+          segmentId: "source-0",
+          before: "Current source",
+          after: "A meaning-changing suggestion",
+        },
+      ],
+    },
+  };
+  const safe = proposal("safe", "source-1", "Second source", "Second source.");
+  const accepted = [];
+  const priorConfirm = globalThis.window.confirm;
+  const confirmations = [];
+  globalThis.window.confirm = (message) => {
+    confirmations.push(message);
+    return true;
+  };
+  t.after(() => {
+    globalThis.window.confirm = priorConfirm;
+  });
+  const host = await render(t, [unsafe, safe], {
+    onAccept: async (...args) => accepted.push(args),
+  });
+
+  await React.act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((button) => button.textContent === "Accept all")
+      .click()
+  );
+  assert.deepEqual(accepted, [[["safe"], safe.validation.edits]]);
+  assert.match(host.textContent, /Possible content omission/);
+  const manual = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent === "Accept after manual review"
+  );
+  assert.ok(manual);
+  await React.act(async () => manual.click());
+  assert.match(confirmations.at(-1), /manually reviewed/i);
+  assert.equal(accepted.length, 2);
+  assert.deepEqual(accepted[1][0], ["unsafe"]);
+});
+
 test("bulk confirmation counts every locked speaker operation inside one proposal", async (t) => {
   const multiSpeaker = {
     ...proposal("multi-speaker", "source-0", "Current source", "Current source"),
@@ -433,6 +481,9 @@ test("pending proposals stay visible during the next chunk and failed approval r
   assert.ok(host.querySelector('[data-proposal-chunk="chunk-1"]'));
   assert.match(host.textContent, /Cancel AI edit/);
   await React.act(async () => host.querySelector('[aria-label="Accept proposal chunk-1"]').click());
+  for (let attempt = 0; attempt < 50 && host.querySelector("textarea").value !== raw; attempt++) {
+    await React.act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
   assert.equal(host.querySelector("textarea").value, raw);
   assert.ok(host.querySelector('[data-proposal-chunk="chunk-1"]'));
   assert.match(host.textContent, /changed in another window/);

@@ -13,6 +13,7 @@ export type TranscriptEditEvent =
       chunk: TranscriptChunk;
       candidate: ProposedChunk;
       validation: ProposalValidation;
+      baseVersion?: number;
     }
   | { type: "progress"; completed: number; total: number; chunkIndex: number }
   | { type: "warning"; message: string; chunkIndex?: number }
@@ -36,6 +37,7 @@ interface Runtime {
 export interface StartTranscriptEditJobInput {
   noteId: number;
   sourceHash: string;
+  baseVersion?: number;
   providerChoice: string;
   strictMode: true;
   selectedIds?: string[];
@@ -202,6 +204,7 @@ function sourcePayload(chunk: TranscriptChunk): string {
 export async function* startTranscriptEditJob(
   input: StartTranscriptEditJobInput
 ): AsyncIterable<TranscriptEditEvent> {
+  const baseVersion = input.baseVersion;
   if (input.signal?.aborted) {
     yield { type: "done", completed: 0, total: 0, cancelled: true };
     return;
@@ -459,6 +462,7 @@ export async function* startTranscriptEditJob(
             chunk: normalChunk,
             candidate: normalCandidate,
             validation,
+            baseVersion,
           };
         }
         if (splitSegments.length) {
@@ -542,7 +546,13 @@ export async function* startTranscriptEditJob(
               for (const message of validation.warnings)
                 yield { type: "warning", message, chunkIndex: index };
             }
-            yield { type: "chunkProposed", chunk: proposalChunk, candidate: proposal, validation };
+            yield {
+              type: "chunkProposed",
+              chunk: proposalChunk,
+              candidate: proposal,
+              validation,
+              baseVersion,
+            };
             sourcePartCandidates.delete(parent);
           }
         }

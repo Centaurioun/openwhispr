@@ -41,13 +41,14 @@ export function ProposalReview({
   );
 
   const accept = async (selected: PendingTranscriptProposal[]) => {
-    if (!canEdit || selected.some(isStale)) return;
-    const speakerAssignmentCount = selected.reduce(
+    const eligible = selected.filter((proposal) => proposal.validation.safe && !isStale(proposal));
+    if (!canEdit || eligible.length === 0) return;
+    const speakerAssignmentCount = eligible.reduce(
       (count, proposal) =>
         count + proposal.validation.edits.filter((edit) => edit.kind === "setSpeaker").length,
       0
     );
-    const uncertainProposalCount = selected.filter(
+    const uncertainProposalCount = eligible.filter(
       (proposal) =>
         proposal.uncertain === true ||
         proposal.validation.edits.some((edit) => edit.kind === "setSpeaker")
@@ -60,12 +61,25 @@ export function ProposalReview({
           : `Confirm ${uncertainProposalCount} uncertain speaker suggestion${uncertainProposalCount === 1 ? "" : "s"}? This batch has no speaker assignment operations to lock.`;
       if (!confirm?.(message)) return;
     }
-    const operations = selected.flatMap(operationsFor);
+    const operations = eligible.flatMap(operationsFor);
     if (operations.length)
       await onAccept(
-        selected.map((item) => item.chunk.id),
+        eligible.map((item) => item.chunk.id),
         operations
       );
+  };
+
+  const acceptAfterManualReview = async (proposal: PendingTranscriptProposal) => {
+    if (!canEdit || isStale(proposal) || proposal.validation.safe) return;
+    const confirm = typeof window !== "undefined" ? window.confirm : undefined;
+    if (
+      !confirm?.(
+        "This AI proposal may omit or change transcript content. Confirm that you manually reviewed this proposal against the source before accepting it."
+      )
+    )
+      return;
+    const operations = operationsFor(proposal);
+    if (operations.length) await onAccept([proposal.chunk.id], operations);
   };
 
   return (
@@ -94,7 +108,10 @@ export function ProposalReview({
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={!canEdit || proposals.length === 0 || proposals.some(isStale)}
+            disabled={
+              !canEdit ||
+              !proposals.some((proposal) => proposal.validation.safe && !isStale(proposal))
+            }
             onClick={() => void accept(proposals)}
           >
             Accept all
@@ -170,6 +187,15 @@ export function ProposalReview({
                     }}
                   >
                     Review changes
+                  </button>
+                ) : !proposal.validation.safe ? (
+                  <button
+                    type="button"
+                    disabled={proposal.validation.edits.length === 0}
+                    aria-label={`Accept proposal ${proposal.chunk.id} after manual review`}
+                    onClick={() => void acceptAfterManualReview(proposal)}
+                  >
+                    Accept after manual review
                   </button>
                 ) : (
                   <button

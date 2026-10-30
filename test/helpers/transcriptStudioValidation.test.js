@@ -19,7 +19,7 @@ const segment = (id, text, sourceIndex) => ({
 });
 const chunk = (...segments) => ({ id: "chunk-1", index: 0, inputTokens: 10, segments });
 
-test("maps only complete, unique source IDs into stable replaceText operations", () => {
+test("maps complete unique source IDs but flags punctuation changes for manual review", () => {
   const source = chunk(segment("a", "Hello world.", 0), segment("b", "Next sentence.", 1));
   const result = validateTranscriptProposal(source, {
     segments: [
@@ -27,7 +27,8 @@ test("maps only complete, unique source IDs into stable replaceText operations",
       { id: "b", text: "Next sentence." },
     ],
   });
-  assert.equal(result.safe, true);
+  assert.equal(result.safe, false);
+  assert.ok(result.warnings.some((warning) => /comma|punctuation|review/i.test(warning)));
   assert.deepEqual(result.edits, [
     { kind: "replaceText", segmentId: "a", before: "Hello world.", after: "Hello, world." },
   ]);
@@ -65,4 +66,103 @@ test("flags missing, duplicate, numeric, named-entity, and truncated output", ()
     assert.equal(result.safe, false);
     assert.ok(result.warnings.length > 0);
   }
+});
+
+test("rejects reordered blocks, malformed shapes, and empty or non-string content", () => {
+  const source = chunk(segment("a", "First line.", 0), segment("b", "Second line.", 1));
+  for (const candidate of [
+    {
+      segments: [
+        { id: "b", text: "Second line." },
+        { id: "a", text: "First line." },
+      ],
+    },
+    {
+      segments: [
+        { id: "a", text: "First line." },
+        { id: "b", text: 42 },
+      ],
+    },
+    {
+      segments: [
+        { id: "a", text: "First line." },
+        { id: "b", text: "" },
+      ],
+    },
+    { segments: "not-an-array" },
+  ]) {
+    const result = validateTranscriptProposal(source, candidate);
+    assert.equal(result.safe, false);
+    assert.ok(result.warnings.length > 0);
+  }
+});
+
+test("flags omitted content, added terms, names, and spelled or signed number changes for individual review", () => {
+  const source = chunk(
+    segment("a", "Ada reviewed every section of the Orion protocol on March 5.", 0),
+    segment("b", "The value is minus twelve point five percent.", 1)
+  );
+  const candidate = {
+    segments: [
+      { id: "a", text: "Ada approved the Orion protocol on March 5. Keep this confidential." },
+      { id: "b", text: "The value is plus twelve point five percent." },
+    ],
+  };
+  const result = validateTranscriptProposal(source, candidate);
+  assert.equal(result.safe, false);
+  assert.ok(result.warnings.some((warning) => /review/i.test(warning)));
+  assert.equal(result.edits.length, 2);
+});
+
+test("flags reordered words that preserve the same token multiset", () => {
+  const source = chunk(segment("a", "Alice told Bob.", 0));
+  const result = validateTranscriptProposal(source, {
+    segments: [{ id: "a", text: "Bob told Alice." }],
+  });
+  assert.equal(result.safe, false);
+  assert.ok(result.warnings.some((warning) => /word order|content|manually review/i.test(warning)));
+});
+
+test("flags punctuation-only changes that can reverse meaning", () => {
+  const source = chunk(segment("a", "Let's eat, Grandma.", 0));
+  const result = validateTranscriptProposal(source, {
+    segments: [{ id: "a", text: "Let's eat Grandma." }],
+  });
+  assert.equal(result.safe, false);
+  assert.ok(result.warnings.some((warning) => /punctuation|meaning|review/i.test(warning)));
+});
+
+test("flags sentence-ending punctuation changes that alter a statement into a question", () => {
+  const source = chunk(segment("a", "You came.", 0));
+  const result = validateTranscriptProposal(source, {
+    segments: [{ id: "a", text: "You came?" }],
+  });
+  assert.equal(result.safe, false);
+  assert.ok(result.warnings.some((warning) => /punctuation|meaning|review/i.test(warning)));
+});
+
+test("flags comma deletions that change list and clause meaning", () => {
+  const examples = [
+    ["I enjoy cooking, my family, and my pets.", "I enjoy cooking my family and my pets."],
+    [
+      "We invited the guests, who had arrived early.",
+      "We invited the guests who had arrived early.",
+    ],
+  ];
+  for (const [before, after] of examples) {
+    const result = validateTranscriptProposal(chunk(segment("a", before, 0)), {
+      segments: [{ id: "a", text: after }],
+    });
+    assert.equal(result.safe, false, `${before} -> ${after}`);
+    assert.ok(result.warnings.some((warning) => /comma|punctuation|meaning|review/i.test(warning)));
+  }
+});
+
+test("rejects a non-JSON envelope rather than accepting a partially parsed object", () => {
+  const source = chunk(segment("a", "Keep all words.", 0));
+  const result = validateTranscriptProposal(source, {
+    segments: [{ id: "a", text: "Keep all words." }],
+    extra: true,
+  });
+  assert.equal(result.safe, false);
 });
