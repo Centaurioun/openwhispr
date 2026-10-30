@@ -20,6 +20,7 @@ const accountScopeBinding = require("./accountScopeBinding");
 const { registerProductHelpIpc, remoteHelpPolicyState } = require("./productHelp");
 const { createCloudApiRequestHandler } = require("./cloudApiRequest");
 const { registerTranscriptStudioWriteIpcHandlers } = require("./transcriptStudioAccess");
+const { isQaCaptureDenialActive, qaCaptureDeniedResult } = require("./qaCapturePolicy");
 const { MetaActivation } = require("./metaActivation");
 const { decodeLeaderboardPngDataUrl, leaderboardImageFilename } = require("./leaderboardImage");
 const { withPolicyRequestHeaders } = require("./policyRequestHeaders");
@@ -1631,9 +1632,15 @@ class IPCHandlers {
     // Each handler takes at most one renderer argument, so the job's signal
     // always lands after it and can't be supplied by the renderer.
     const handleAudioFeature = (channel, purpose, handler) =>
-      ipcMain.handle(channel, (event, options) =>
-        this._audioFeaturePolicy.run(event, purpose, (signal) => handler(event, options, signal))
-      );
+      ipcMain.handle(channel, (event, options) => {
+        if (channel === "meeting-transcription-start") {
+          const denied = qaCaptureDeniedResult();
+          if (denied) return denied;
+        }
+        return this._audioFeaturePolicy.run(event, purpose, (signal) =>
+          handler(event, options, signal)
+        );
+      });
     // Runs a job under the audio policy and the caller's own cancellation
     // ({ signal, release }); the handler gets one signal for both.
     const runAudioJob = (event, purpose, { signal, release }, handler) =>
@@ -6460,6 +6467,8 @@ class IPCHandlers {
     ipcMain.handle("check-screen-recording-access", () => screenContextCapture.getAccessResult());
 
     ipcMain.handle("request-screen-recording-access", async () => {
+      if (isQaCaptureDenialActive())
+        return { success: false, status: "denied", code: "QA_CAPTURE_DENIED" };
       const status = await screenContextCapture.requestAccess();
       if (process.platform === "darwin" && status !== "granted") {
         await openSystemSettings("screenRecording");
@@ -6528,6 +6537,8 @@ class IPCHandlers {
       this.windowManager.getAgentDictationPillState().interactive;
 
     ipcMain.handle("toggle-agent-panel-dictation", (event) => {
+      const denied = qaCaptureDeniedResult();
+      if (denied) return denied;
       if (!isAgentDictationPill(event) || !isAgentDictationPillInteractive()) {
         return { success: false };
       }
@@ -6578,6 +6589,9 @@ class IPCHandlers {
     });
 
     ipcMain.handle("request-microphone-access", async () => {
+      if (isQaCaptureDenialActive()) {
+        return { granted: false, status: "denied", code: "QA_CAPTURE_DENIED" };
+      }
       if (process.platform !== "darwin") {
         return { granted: true, status: "granted" };
       }
@@ -6684,12 +6698,16 @@ class IPCHandlers {
     ipcMain.handle("check-system-audio-access", () => getSystemAudioAccess());
 
     ipcMain.handle("permission-guide-verify-system-audio", async () => {
+      if (isQaCaptureDenialActive())
+        return { success: false, status: "denied", code: "QA_CAPTURE_DENIED" };
       if (!this.audioTapManager?.isSupported()) return buildSystemAudioAccess();
       const result = await this.audioTapManager.requestAccess();
       return buildSystemAudioAccess({ ...result, mode: "native", strategy: "native" });
     });
 
     ipcMain.handle("request-system-audio-access", async () => {
+      if (isQaCaptureDenialActive())
+        return { success: false, status: "denied", code: "QA_CAPTURE_DENIED" };
       if (process.platform === "win32") {
         return getWindowsSystemAudioAccess();
       }
@@ -10505,6 +10523,7 @@ class IPCHandlers {
     // capturedAt marks audio the renderer held while main connected; it is
     // clamped to the connect window so a renderer can't move the timeline.
     ipcMain.on("meeting-transcription-send", (_event, audioBuffer, source, capturedAt) => {
+      if (isQaCaptureDenialActive()) return;
       const buffer = Buffer.isBuffer(audioBuffer) ? audioBuffer : Buffer.from(audioBuffer);
       if (source === "system") {
         const route = meetingSystemAudioHandover.acceptRendererChunk(buffer);
@@ -10762,6 +10781,8 @@ class IPCHandlers {
 
     let dictationWarmupQueue = Promise.resolve();
     ipcMain.handle("dictation-realtime-warmup", (event, options = {}) => {
+      const denied = qaCaptureDeniedResult();
+      if (denied) return denied;
       const warmup = dictationWarmupQueue
         .then(() => warmupDictationStreaming(event, options))
         .catch(streamingStartFailure);
@@ -10770,6 +10791,8 @@ class IPCHandlers {
     });
 
     ipcMain.handle("dictation-realtime-start", async (event, options = {}) => {
+      const denied = qaCaptureDeniedResult();
+      if (denied) return denied;
       try {
         clearDictationIdleTimer();
         this._dictationPreviewEnabled = !!options.preview;
@@ -10817,6 +10840,8 @@ class IPCHandlers {
     ipcMain.handle(
       "start-dictation-preview",
       async (_event, { provider, model, language, display = true }) => {
+        const denied = qaCaptureDeniedResult();
+        if (denied) return denied;
         resetDictationPreviewState();
         const gen = dictationPreviewGen;
         dictationPreviewMode = true;

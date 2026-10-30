@@ -4,6 +4,7 @@ const EventEmitter = require("events");
 const debugLogger = require("./debugLogger");
 const { resolveBundledBinary } = require("./binaryResolver");
 const { getOwnProcessPids } = require("./ownProcessPids");
+const { isQaCaptureDenialActive } = require("./qaCapturePolicy");
 
 const execAsync = promisify(exec);
 
@@ -172,6 +173,7 @@ class AudioActivityDetector extends EventEmitter {
   }
 
   async start() {
+    if (isQaCaptureDenialActive()) return false;
     if (this._running) return;
     this._running = true;
     this._respawnAttempts = 0;

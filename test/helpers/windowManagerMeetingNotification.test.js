@@ -416,6 +416,26 @@ test("window manager starts fail-closed and suppresses normal-app popup surfaces
   assert.deepEqual(createdWindows, []);
 });
 
+test("capture-denied QA suppresses dictation hotkey and preparation IPC dispatch", () => {
+  const previous = process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+  process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE = "1";
+  try {
+    const manager = new WindowManager();
+    const window = new FakeBrowserWindow({});
+    manager.mainWindow = window;
+
+    manager.sendPrepareDictation();
+    manager.sendToggleDictation();
+    manager.startWindowsPushToTalk("F8");
+
+    assert.deepEqual(window.messages, []);
+    assert.equal(manager.winPushState, null);
+  } finally {
+    if (previous === undefined) delete process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+    else process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE = previous;
+  }
+});
+
 test("a detection suppressed while onboarding is active is released", async () => {
   const manager = new WindowManager();
   const closedDetections = [];
