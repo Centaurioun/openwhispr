@@ -4,6 +4,11 @@ const { XWAYLAND_FLAG, shouldForceXWayland } = require("./src/helpers/xwayland")
 const { createHotkeyRepeatGate } = require("./src/helpers/hotkeyRepeatGate");
 const { shouldDisableGpuCompositing } = require("./src/helpers/linuxGpuCompositing");
 const { configureUserDataPath } = require("./src/helpers/userDataPath");
+const {
+  configureQaCaptureDenial,
+  isQaCaptureDenialActive,
+  readMacBundleId,
+} = require("./src/helpers/qaCapturePolicy");
 
 if (shouldForceXWayland(process.argv)) {
   const { spawn } = require("child_process");
@@ -44,11 +49,12 @@ try {
   });
 }
 
-const VALID_CHANNELS = new Set(["development", "staging", "production"]);
+const VALID_CHANNELS = new Set(["development", "staging", "production", "codexqa"]);
 const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
   development: "openwhispr-dev",
   staging: "openwhispr-staging",
   production: "openwhispr",
+  codexqa: "openwhispr-dev",
 };
 const BASE_WINDOWS_APP_ID = "com.gizmolabs.openwhispr";
 const DEFAULT_AUTH_BRIDGE_PORT = 5199;
@@ -2072,7 +2078,24 @@ if (gotSingleInstanceLock) {
       return new Promise((resolve) => setTimeout(resolve, delay));
     })
     .then(() => {
-      if (process.platform === "win32") {
+      try {
+        configureQaCaptureDenial({
+          env: process.env,
+          isPackaged: app.isPackaged,
+          appChannel: APP_CHANNEL,
+          bundleId:
+            process.platform === "darwin" && process.env.OPENWHISPR_QA_DENY_CAPTURE === "1"
+              ? readMacBundleId(app.getPath("exe"), process.platform)
+              : "",
+          targetSession: session.defaultSession,
+        });
+      } catch (error) {
+        console.error("Capture-denied QA setup failed:", error?.message || String(error));
+        app.exit(1);
+        return;
+      }
+
+      if (process.platform === "win32" && !isQaCaptureDenialActive()) {
         session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
           // Only the loopback audio track is used; the video source is
           // discarded by the renderer, so skip thumbnail generation.

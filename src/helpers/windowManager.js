@@ -62,6 +62,7 @@ const MEETING_NOTIFICATION_CARD_REGION = Object.freeze({
 const { centeredBounds, clampedBounds } = require("./onboardingWindowBounds");
 const { ONBOARDING_DEMO_KINDS, isOnboardingInputAllowed } = require("./onboardingInputPolicy");
 const { createHotkeyRepeatGate } = require("./hotkeyRepeatGate");
+const { isQaCaptureDenialActive } = require("./qaCapturePolicy");
 
 class WindowManager {
   constructor() {
@@ -981,6 +982,7 @@ class WindowManager {
   }
 
   startWindowsPushToTalk(key) {
+    if (isQaCaptureDenialActive()) return;
     if (!this._isOnboardingInputAllowed("dictation")) return;
     if (this.winPushState?.active || this.isDictationProcessing()) {
       return;
@@ -1225,6 +1227,7 @@ class WindowManager {
   }
 
   sendToggleDictation() {
+    if (isQaCaptureDenialActive()) return;
     this._sendDictationToggle("toggle-dictation", "dictation");
   }
 
@@ -1283,6 +1286,7 @@ class WindowManager {
   }
 
   sendPrepareDictation({ inputKind = "dictation" } = {}) {
+    if (isQaCaptureDenialActive()) return;
     if (!this._isOnboardingInputAllowed(inputKind)) return;
     if (this._shouldBlockDictationInput(inputKind)) {
       return;
