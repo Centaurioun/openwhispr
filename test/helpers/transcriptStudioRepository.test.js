@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const Database = require("better-sqlite3");
 const { createDb } = require("./harness/db.js");
+const DatabaseManager = require("../../src/helpers/database.js");
 const { createHash } = require("node:crypto");
 const {
   normalizeTranscriptSource,
@@ -675,4 +676,36 @@ test("legacy note-keyed overlay data migrates to the owning account scope withou
     1,
     "old unscoped team history is preserved without showing it to every team member"
   );
+
+  assert.equal(
+    db.db.prepare("SELECT transcript FROM notes WHERE id = ?").get(note.id).transcript,
+    raw,
+    "migration never rewrites the original transcript"
+  );
+  const teamSource = db.db
+    .prepare("SELECT transcript FROM notes WHERE id = ?")
+    .get(teamNote.id).transcript;
+  db.db.close();
+
+  const reopened = new DatabaseManager();
+  t.after(() => reopened.db?.close());
+  reopened.initTranscriptStudioSchema();
+  reopened.initTranscriptStudioSchema();
+  reopened.setActiveAccountId("legacy-owner");
+  const reopenedOwner = reopened.getTranscriptWorkspace(note.id);
+  assert.equal(reopenedOwner.sourceTranscript, raw);
+  assert.equal(reopenedOwner.currentVersion, 1);
+  assert.deepEqual(reopenedOwner.approvedOperations, [{ kind: "legacy" }]);
+  assert.equal(reopened.listTranscriptVersions(note.id).length, 2);
+  assert.equal(
+    reopened.db.prepare("SELECT transcript FROM notes WHERE id = ?").get(note.id).transcript,
+    raw
+  );
+
+  reopened.setActiveAccountId("legacy-member");
+  const reopenedTeam = reopened.getTranscriptWorkspace(teamNote.id);
+  assert.equal(reopenedTeam.sourceTranscript, teamSource);
+  assert.equal(reopenedTeam.currentVersion, 0);
+  assert.deepEqual(reopenedTeam.approvedOperations, []);
+  assert.equal(reopened.listTranscriptVersions(teamNote.id).length, 1);
 });

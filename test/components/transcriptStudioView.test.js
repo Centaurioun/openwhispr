@@ -25,6 +25,7 @@ let React;
 let vite;
 let TranscriptStudioView;
 let normalizeTranscriptSource;
+let planTranscriptChunks;
 let usePolicyStore;
 
 test.before(async (t) => {
@@ -45,6 +46,9 @@ test.before(async (t) => {
   ));
   ({ normalizeTranscriptSource } = await vite.ssrLoadModule(
     "/custom-features/transcript-studio/domain/normalizeSource.ts"
+  ));
+  ({ planTranscriptChunks } = await vite.ssrLoadModule(
+    "/custom-features/transcript-studio/process/chunkPlanner.ts"
   ));
   ({ usePolicyStore } = await vite.ssrLoadModule("/stores/policyStore.ts"));
 });
@@ -266,6 +270,7 @@ test("completed proposals survive cancellation and renderer remount in local sto
     approvedOperations: [],
     stale: false,
   };
+  const [chunk] = planTranscriptChunks(normalized.segments, 6000);
   const previousPolicy = usePolicyStore.getState();
   usePolicyStore.setState({ accountId: "draft-recovery-account", authGeneration: 1 });
   const key = `transcript-studio-proposals:draft-recovery-account:25:${normalized.sourceHash}`;
@@ -280,13 +285,7 @@ test("completed proposals survive cancellation and renderer remount in local sto
   const jobRunner = async function* () {
     yield {
       type: "chunkProposed",
-      chunk: {
-        id: "persisted-proposal",
-        index: 0,
-        segments: [{ id: segmentId, text: "Persist this proposal" }],
-        inputTokens: 1,
-        outputTokens: 1,
-      },
+      chunk,
       candidate: { segments: [{ id: segmentId, text: "Persist this proposal." }] },
       validation: {
         safe: true,
@@ -310,7 +309,7 @@ test("completed proposals survive cancellation and renderer remount in local sto
   );
   await React.act(async () => button.click());
   assert.equal(
-    await waitFor(() => !!first.host.querySelector('[data-proposal-chunk="persisted-proposal"]')),
+    await waitFor(() => !!first.host.querySelector(`[data-proposal-chunk="${chunk.id}"]`)),
     true
   );
   assert.ok(happyWindow.localStorage.getItem(key));
@@ -323,7 +322,7 @@ test("completed proposals survive cancellation and renderer remount in local sto
     apiFor(workspace)
   );
   assert.equal(
-    await waitFor(() => !!second.host.querySelector('[data-proposal-chunk="persisted-proposal"]')),
+    await waitFor(() => !!second.host.querySelector(`[data-proposal-chunk="${chunk.id}"]`)),
     true
   );
 });
@@ -377,6 +376,7 @@ test("stored proposals with a mismatched source are discarded on load", async (t
 test("a forged stored safe flag is recalculated from the immutable source and candidate", async (t) => {
   const raw = "Alice told Bob.";
   const normalized = await normalizeTranscriptSource(raw);
+  const [chunk] = planTranscriptChunks(normalized.segments, 6000);
   const previousPolicy = usePolicyStore.getState();
   usePolicyStore.setState({ accountId: "forged-draft-account", authGeneration: 7 });
   const key = `transcript-studio-proposals:forged-draft-account:27:${normalized.sourceHash}`;
@@ -392,13 +392,7 @@ test("a forged stored safe flag is recalculated from the immutable source and ca
         {
           type: "chunkProposed",
           baseVersion: 0,
-          chunk: {
-            id: "forged",
-            index: 0,
-            segments: [{ id: segmentId, text: raw }],
-            inputTokens: 1,
-            outputTokens: 1,
-          },
+          chunk,
           candidate: { segments: [{ id: segmentId, text: "Bob told Alice." }] },
           validation: {
             safe: true,
@@ -430,7 +424,10 @@ test("a forged stored safe flag is recalculated from the immutable source and ca
     { noteId: 27, sourceTranscript: raw, canEdit: true },
     apiFor(workspace)
   );
-  assert.equal(await waitFor(() => !!host.querySelector('[data-proposal-chunk="forged"]')), true);
+  assert.equal(
+    await waitFor(() => !!host.querySelector(`[data-proposal-chunk="${chunk.id}"]`)),
+    true
+  );
   const acceptAll = [...host.querySelectorAll("button")].find(
     (button) => button.textContent === "Accept all"
   );
@@ -439,8 +436,316 @@ test("a forged stored safe flag is recalculated from the immutable source and ca
     true,
     "stored safe/warnings/edits fields must not authorize bulk acceptance"
   );
-  assert.ok(host.querySelector('[aria-label="Accept proposal forged after manual review"]'));
+  assert.ok(host.querySelector(`[aria-label="Accept proposal ${chunk.id} after manual review"]`));
   assert.match(host.textContent, /content|manually review/i);
+});
+
+test("a structurally incomplete saved proposal is discarded with a safe retry action", async (t) => {
+  const raw = '[{"text":"Original first."},{"text":"Original second."}]';
+  const normalized = await normalizeTranscriptSource(raw);
+  const [chunk] = planTranscriptChunks(normalized.segments, 6000);
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId: "incomplete-draft-account", authGeneration: 10 });
+  const key = `transcript-studio-proposals:incomplete-draft-account:68:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  happyWindow.localStorage.setItem(
+    key,
+    JSON.stringify({
+      accountId: "incomplete-draft-account",
+      noteId: 68,
+      sourceHash: normalized.sourceHash,
+      proposals: [
+        {
+          type: "chunkProposed",
+          baseVersion: 0,
+          chunk,
+          candidate: {
+            segments: [{ id: normalized.segments[0].id, text: "Edited first." }],
+          },
+          validation: {
+            safe: true,
+            warnings: [],
+            edits: [
+              {
+                kind: "replaceText",
+                segmentId: normalized.segments[0].id,
+                before: "Original first.",
+                after: "Edited first.",
+              },
+            ],
+          },
+        },
+      ],
+    })
+  );
+  t.after(() => {
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const workspace = {
+    noteId: 68,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  let retryCalls = 0;
+  const jobRunner = async function* () {
+    retryCalls += 1;
+    yield { type: "done", completed: 0, total: 1 };
+  };
+  const { host } = await mount(
+    t,
+    { noteId: 68, sourceTranscript: raw, canEdit: true, jobRunner },
+    apiFor(workspace)
+  );
+
+  assert.equal(
+    await waitFor(() => host.textContent.includes("could not be restored safely")),
+    true,
+    host.textContent
+  );
+  assert.equal(host.querySelector(`[data-proposal-chunk="${chunk.id}"]`), null);
+  assert.equal(host.querySelectorAll("textarea")[0].value, "Original first.");
+  assert.equal(host.querySelectorAll("textarea")[1].value, "Original second.");
+  const retry = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent.includes("Retry AI edit")
+  );
+  assert.ok(retry);
+  await React.act(async () => retry.click());
+  assert.equal(await waitFor(() => retryCalls === 1), true);
+  assert.equal(host.querySelectorAll("textarea")[0].value, "Original first.");
+  assert.equal(host.querySelectorAll("textarea")[1].value, "Original second.");
+});
+
+for (const [tamper, mutateChunk] of [
+  ["omits an owned source segment", (chunk) => (chunk.segments = chunk.segments.slice(0, 1))],
+  ["reorders its source segments", (chunk) => (chunk.segments = chunk.segments.reverse())],
+  [
+    "marks an owned source segment as context only",
+    (chunk) => (chunk.segments[1].contextOnly = true),
+  ],
+]) {
+  test(`a saved chunk that ${tamper} is not trusted during recovery`, async (t) => {
+    const raw = '[{"text":"Original first."},{"text":"Original second."}]';
+    const normalized = await normalizeTranscriptSource(raw);
+    const [canonicalChunk] = planTranscriptChunks(normalized.segments, 6000);
+    const chunk = JSON.parse(JSON.stringify(canonicalChunk));
+    mutateChunk(chunk);
+    const previousPolicy = usePolicyStore.getState();
+    const accountId = `tampered-chunk-${tamper.replaceAll(" ", "-")}`;
+    const noteId = 70;
+    usePolicyStore.setState({ accountId, authGeneration: 11 });
+    const key = `transcript-studio-proposals:${accountId}:${noteId}:${normalized.sourceHash}`;
+    const prior = happyWindow.localStorage.getItem(key);
+    happyWindow.localStorage.setItem(
+      key,
+      JSON.stringify({
+        accountId,
+        noteId,
+        sourceHash: normalized.sourceHash,
+        proposals: [
+          {
+            type: "chunkProposed",
+            baseVersion: 0,
+            chunk,
+            candidate: {
+              segments: chunk.segments
+                .filter((segment) => !segment.contextOnly)
+                .map((segment) => ({
+                  id: segment.id,
+                  text: segment.text.replace("Original", "Updated"),
+                })),
+            },
+            validation: {
+              structurallyValid: true,
+              safe: true,
+              warnings: [],
+              edits: [],
+            },
+          },
+        ],
+      })
+    );
+    t.after(() => {
+      usePolicyStore.setState(previousPolicy);
+      if (prior === null) happyWindow.localStorage.removeItem(key);
+      else happyWindow.localStorage.setItem(key, prior);
+    });
+    const workspace = {
+      noteId,
+      sourceTranscript: raw,
+      originalTranscript: raw,
+      sourceHash: normalized.sourceHash,
+      baselineSourceHash: normalized.sourceHash,
+      currentVersion: 0,
+      versionId: null,
+      approvedOperations: [],
+      stale: false,
+    };
+    const { host } = await mount(
+      t,
+      { noteId, sourceTranscript: raw, canEdit: true },
+      apiFor(workspace)
+    );
+
+    assert.equal(
+      await waitFor(() => host.textContent.includes("could not be restored safely")),
+      true,
+      host.textContent
+    );
+    assert.equal(host.querySelector('[data-proposal-chunk="chunk-0"]'), null);
+    assert.deepEqual(
+      [...host.querySelectorAll("textarea")].map((textarea) => textarea.value),
+      normalized.segments.map((segment) => segment.text)
+    );
+  });
+}
+
+test("a cached scope cannot narrow the source scope used for proposal recovery", async (t) => {
+  const raw = '[{"text":"First source sentence."},{"text":"Selected source sentence."}]';
+  const normalized = await normalizeTranscriptSource(raw);
+  const selected = [normalized.segments[1]];
+  const [chunk] = planTranscriptChunks(selected, 6000);
+  const accountId = "selected-draft-recovery";
+  const noteId = 71;
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId, authGeneration: 12 });
+  const key = `transcript-studio-proposals:${accountId}:${noteId}:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  happyWindow.localStorage.setItem(
+    key,
+    JSON.stringify({
+      accountId,
+      noteId,
+      sourceHash: normalized.sourceHash,
+      scope: { segmentIds: selected.map((segment) => segment.id), maxInputTokens: 6000 },
+      proposals: [
+        {
+          type: "chunkProposed",
+          baseVersion: 0,
+          draftScope: { segmentIds: selected.map((segment) => segment.id), maxInputTokens: 6000 },
+          chunk,
+          candidate: {
+            segments: [{ id: selected[0].id, text: "Selected source remains." }],
+          },
+        },
+      ],
+    })
+  );
+  t.after(() => {
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const workspace = {
+    noteId,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const { host } = await mount(
+    t,
+    { noteId, sourceTranscript: raw, canEdit: true },
+    apiFor(workspace)
+  );
+
+  assert.equal(
+    await waitFor(() => host.textContent.includes("could not be restored safely")),
+    true,
+    host.textContent
+  );
+  assert.equal(host.querySelector('[data-proposal-chunk="chunk-0"]'), null);
+  assert.equal(
+    [...host.querySelectorAll("button")].some((button) =>
+      button.textContent.includes("Retry AI edit")
+    ),
+    true
+  );
+  assert.deepEqual(
+    [...host.querySelectorAll("textarea")].map((textarea) => textarea.value),
+    normalized.segments.map((segment) => segment.text)
+  );
+});
+
+test("a valid synthetic proposal for an oversized source segment survives recovery", async (t) => {
+  const sourceText = `Original ${"source words ".repeat(1900)}`;
+  const normalized = await normalizeTranscriptSource(sourceText);
+  const source = normalized.segments[0];
+  const chunks = planTranscriptChunks(normalized.segments, 6000);
+  const lastSplitChunk = [...chunks]
+    .reverse()
+    .find((chunk) => chunk.segments.some((segment) => segment.parentSegmentId === source.id));
+  assert.ok(lastSplitChunk);
+  const chunk = {
+    id: `${lastSplitChunk.id}-${source.id}`,
+    index: lastSplitChunk.index,
+    segments: [source],
+    inputTokens: Math.max(1, Math.ceil(source.text.length / 3.5)) + 12,
+    outputTokens: lastSplitChunk.outputTokens,
+  };
+  const accountId = "split-draft-recovery";
+  const noteId = 72;
+  const previousPolicy = usePolicyStore.getState();
+  usePolicyStore.setState({ accountId, authGeneration: 13 });
+  const key = `transcript-studio-proposals:${accountId}:${noteId}:${normalized.sourceHash}`;
+  const prior = happyWindow.localStorage.getItem(key);
+  happyWindow.localStorage.setItem(
+    key,
+    JSON.stringify({
+      accountId,
+      noteId,
+      sourceHash: normalized.sourceHash,
+      scope: { segmentIds: normalized.segments.map((segment) => segment.id), maxInputTokens: 6000 },
+      proposals: [
+        {
+          type: "chunkProposed",
+          baseVersion: 0,
+          chunk,
+          candidate: {
+            segments: [{ id: source.id, text: source.text.replace("Original", "Updated") }],
+          },
+        },
+      ],
+    })
+  );
+  t.after(() => {
+    usePolicyStore.setState(previousPolicy);
+    if (prior === null) happyWindow.localStorage.removeItem(key);
+    else happyWindow.localStorage.setItem(key, prior);
+  });
+  const workspace = {
+    noteId,
+    sourceTranscript: sourceText,
+    originalTranscript: sourceText,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const { host } = await mount(
+    t,
+    { noteId, sourceTranscript: sourceText, canEdit: true },
+    apiFor(workspace)
+  );
+
+  assert.equal(
+    await waitFor(() => !!host.querySelector(`[data-proposal-chunk="${chunk.id}"]`)),
+    true
+  );
+  assert.ok(host.querySelector(`[aria-label="Accept proposal ${chunk.id} after manual review"]`));
 });
 
 test("corrupt saved proposals show a recovery warning instead of disappearing silently", async (t) => {
@@ -473,7 +778,9 @@ test("corrupt saved proposals show a recovery warning instead of disappearing si
     apiFor(workspace)
   );
   assert.equal(
-    await waitFor(() => /saved AI proposals could not be (recovered|read)/i.test(host.textContent)),
+    await waitFor(() =>
+      /saved AI proposals could not be (restored safely|recovered|read)/i.test(host.textContent)
+    ),
     true,
     host.textContent
   );
@@ -1826,6 +2133,55 @@ test("proposal acceptance is locked during another pending save and retains the 
     storedAfterSave.some((proposal) => proposal.chunk.id === "overlap-proposal"),
     true
   );
+});
+
+test("a structurally invalid AI response leaves the transcript unchanged and offers retry", async (t) => {
+  const raw = '[{"text":"Original transcript text."}]';
+  const normalized = await normalizeTranscriptSource(raw);
+  const workspace = {
+    noteId: 67,
+    sourceTranscript: raw,
+    originalTranscript: raw,
+    sourceHash: normalized.sourceHash,
+    baselineSourceHash: normalized.sourceHash,
+    currentVersion: 0,
+    versionId: null,
+    approvedOperations: [],
+    stale: false,
+  };
+  const jobCalls = [];
+  const jobRunner = async function* (params) {
+    jobCalls.push(params.resumeFromChunk);
+    if (jobCalls.length === 1) {
+      yield {
+        type: "failed",
+        message: "The AI response was structurally incomplete or invalid.",
+        chunkIndex: 0,
+        resumeFromChunk: 0,
+      };
+      return;
+    }
+    yield { type: "done", completed: 0, total: 1 };
+  };
+  const { host } = await mount(
+    t,
+    { noteId: 67, sourceTranscript: raw, canEdit: true, jobRunner },
+    apiFor(workspace)
+  );
+  const runButton = () =>
+    [...host.querySelectorAll("button")].find((button) =>
+      /Edit transcript with AI|Resume AI edit|Retry AI edit/i.test(button.textContent)
+    );
+
+  await React.act(async () => runButton().click());
+  assert.equal(await waitFor(() => host.textContent.includes("structurally incomplete")), true);
+  assert.equal(host.querySelector("textarea").value, "Original transcript text.");
+  assert.equal(runButton().textContent, "Retry AI edit");
+
+  await React.act(async () => runButton().click());
+  assert.equal(await waitFor(() => jobCalls.length === 2), true);
+  assert.deepEqual(jobCalls, [0, 0]);
+  assert.equal(host.querySelector("textarea").value, "Original transcript text.");
 });
 
 test("undo stays blocked through a failed save and retry preserves the draft", async (t) => {

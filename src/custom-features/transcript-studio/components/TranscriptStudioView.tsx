@@ -8,7 +8,11 @@ import {
 import { normalizeTranscriptSource } from "../domain/normalizeSource";
 import type { SourceSegment } from "../domain/types";
 import { validateTranscriptProposal, type ProposedChunk } from "../domain/validateProposal";
-import type { TranscriptChunk } from "../process/chunkPlanner";
+import {
+  DEFAULT_TRANSCRIPT_INPUT_TOKENS,
+  planTranscriptChunks,
+  type TranscriptChunk,
+} from "../process/chunkPlanner";
 import { transcriptStudioRepository } from "../persistence/repository";
 import {
   createTranscriptStudioStore,
@@ -80,6 +84,36 @@ type ProposalDraftReadResult = {
   proposals: PendingTranscriptProposal[];
   warning?: string;
 };
+const expectedProposalChunk = (
+  cachedChunk: Record<string, unknown>,
+  canonicalChunks: TranscriptChunk[],
+  scopedSegments: SourceSegment[]
+): TranscriptChunk | undefined => {
+  if (!Number.isInteger(cachedChunk.index)) return undefined;
+  const canonical = canonicalChunks[cachedChunk.index as number];
+  if (!canonical) return undefined;
+  if (cachedChunk.id === canonical.id) {
+    return {
+      ...canonical,
+      segments: canonical.segments.filter(
+        (segment) => segment.contextOnly || !segment.parentSegmentId
+      ),
+    };
+  }
+  const parent = scopedSegments.find(
+    (segment) =>
+      cachedChunk.id === `${canonical.id}-${segment.id}` &&
+      canonical.segments.some((part) => !part.contextOnly && part.parentSegmentId === segment.id)
+  );
+  if (!parent) return undefined;
+  return {
+    id: `${canonical.id}-${parent.id}`,
+    index: canonical.index,
+    segments: [parent],
+    inputTokens: Math.max(1, Math.ceil(parent.text.length / 3.5)) + 12,
+    outputTokens: canonical.outputTokens,
+  };
+};
 const readProposalDraft = (
   key: string,
   identity: { accountId: string; noteId: number; sourceHash: string },
@@ -107,7 +141,7 @@ const readProposalDraft = (
         warning:
           "Saved AI proposals did not match this account, note, or transcript source and were not loaded.",
       };
-    const sourceById = new Map(sourceSegments.map((segment) => [segment.id, segment]));
+    const expectedChunks = planTranscriptChunks(sourceSegments, DEFAULT_TRANSCRIPT_INPUT_TOKENS);
     let invalidEntries = 0;
     const proposals = draft.proposals.flatMap((value): PendingTranscriptProposal[] => {
       if (!value || typeof value !== "object") {
@@ -117,66 +151,68 @@ const readProposalDraft = (
       const proposal = value as Record<string, unknown>;
       const chunk = proposal.chunk as Record<string, unknown> | undefined;
       const candidate = proposal.candidate as Record<string, unknown> | undefined;
+      const expectedChunk = chunk
+        ? expectedProposalChunk(chunk, expectedChunks, sourceSegments)
+        : undefined;
       const structurallyValid =
         proposal.type === "chunkProposed" &&
         Number.isInteger(proposal.baseVersion) &&
         !!chunk &&
-        typeof chunk.id === "string" &&
-        Number.isInteger(chunk.index) &&
-        typeof chunk.inputTokens === "number" &&
-        typeof chunk.outputTokens === "number" &&
+        !!expectedChunk &&
+        chunk.id === expectedChunk.id &&
+        chunk.index === expectedChunk.index &&
+        chunk.inputTokens === expectedChunk.inputTokens &&
+        chunk.outputTokens === expectedChunk.outputTokens &&
         Array.isArray(chunk.segments) &&
-        chunk.segments.every(
-          (segment) =>
+        chunk.segments.length === expectedChunk.segments.length &&
+        chunk.segments.every((segment, index) => {
+          const expectedSegment = expectedChunk.segments[index];
+          return (
             !!segment &&
-            typeof segment.id === "string" &&
-            sourceById.has(segment.id) &&
-            typeof segment.text === "string" &&
-            (segment.parentSegmentId === undefined ||
-              (typeof segment.parentSegmentId === "string" &&
-                Number.isInteger(segment.partIndex) &&
-                Number.isInteger(segment.partCount)))
-        ) &&
+            typeof segment === "object" &&
+            segment.id === expectedSegment.id &&
+            segment.text === expectedSegment.text &&
+            segment.contextOnly === expectedSegment.contextOnly &&
+            segment.parentSegmentId === expectedSegment.parentSegmentId &&
+            segment.partIndex === expectedSegment.partIndex &&
+            segment.partCount === expectedSegment.partCount &&
+            segment.textStart === expectedSegment.textStart &&
+            segment.textEnd === expectedSegment.textEnd
+          );
+        }) &&
         Array.isArray(candidate?.segments) &&
         candidate.segments.every(
           (segment) =>
             !!segment &&
             typeof segment.id === "string" &&
-            sourceById.has(segment.id) &&
+            expectedChunk.segments.some(
+              (expectedSegment) => !expectedSegment.contextOnly && expectedSegment.id === segment.id
+            ) &&
             typeof segment.text === "string"
         );
-      if (!structurallyValid || !chunk || !candidate || !Array.isArray(chunk.segments)) {
+      if (
+        !structurallyValid ||
+        !chunk ||
+        !expectedChunk ||
+        !candidate ||
+        !Array.isArray(chunk.segments)
+      ) {
         invalidEntries += 1;
         return [];
       }
-      const reconstructedSegments: TranscriptChunk["segments"] = chunk.segments.map(
-        (storedSegment) => {
-          const row = storedSegment as Record<string, unknown>;
-          const source = sourceById.get(row.id as string)!;
-          return {
-            ...source,
-            ...(row.contextOnly === true ? { contextOnly: true } : {}),
-            ...(typeof row.parentSegmentId === "string"
-              ? {
-                  parentSegmentId: row.parentSegmentId,
-                  partIndex: row.partIndex as number,
-                  partCount: row.partCount as number,
-                }
-              : {}),
-          };
-        }
-      );
-      const reconstructedChunk = {
-        ...(chunk as unknown as TranscriptChunk),
-        segments: reconstructedSegments,
-      };
+      const reconstructedChunk = expectedChunk;
       const proposed = candidate as unknown as ProposedChunk;
+      const validation = validateTranscriptProposal(reconstructedChunk, proposed);
+      if (!validation.structurallyValid) {
+        invalidEntries += 1;
+        return [];
+      }
       return [
         {
           ...(proposal as unknown as PendingTranscriptProposal),
           chunk: reconstructedChunk,
           candidate: proposed,
-          validation: validateTranscriptProposal(reconstructedChunk, proposed),
+          validation,
         },
       ];
     });
@@ -185,7 +221,7 @@ const readProposalDraft = (
       ...(invalidEntries > 0
         ? {
             warning:
-              "Some saved AI proposals were invalid and could not be recovered. The transcript source is unchanged.",
+              "Some saved AI proposals could not be restored safely. The transcript source is unchanged; start another AI edit to retry.",
           }
         : {}),
     };
@@ -368,6 +404,7 @@ export function TranscriptStudioView({
   const [compareText, setCompareText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [jobRunning, setJobRunning] = useState(false);
+  const [retryAvailable, setRetryAvailable] = useState(false);
   const [resumeFromChunk, setResumeFromChunk] = useState(0);
   const jobControllerRef = useRef<AbortController | null>(null);
   const accountKey = usePolicyStore(
@@ -405,6 +442,7 @@ export function TranscriptStudioView({
     setProposalDraftScopeKey(key);
     setProposals(result.proposals);
     setProposalRecoveryWarning(result.warning ?? "");
+    setRetryAvailable(!!result.warning);
     setProposalPersistenceWarning("");
   }, [loading, recoveryAccountId, noteId, metadataRef.current.sourceHash, session]);
 
@@ -1080,6 +1118,7 @@ export function TranscriptStudioView({
     jobControllerRef.current = controller;
     setJobRunning(true);
     setJobMessage("");
+    setRetryAvailable(false);
     const jobContext = { ...proposalContextRef.current };
     const jobBaseVersion = metadataRef.current.currentVersion;
     const isJobContextCurrent = () => {
@@ -1146,10 +1185,14 @@ export function TranscriptStudioView({
           }
         } else if (event.type === "failed") {
           setResumeFromChunk(event.resumeFromChunk);
+          setRetryAvailable(true);
           setJobMessage(`${event.message} You can resume from this chunk.`);
         } else if (event.type === "done") {
           setJobRunning(false);
-          if (event.cancelled) setJobProgress("Transcript edit job cancelled.");
+          if (event.cancelled) {
+            setRetryAvailable(true);
+            setJobProgress("Transcript edit job cancelled.");
+          }
         }
       }
     } catch (jobError) {
@@ -1345,7 +1388,11 @@ export function TranscriptStudioView({
           disabled={!canEdit || stale || saving || jobRunning}
           onClick={() => void startAiEdit()}
         >
-          {resumeFromChunk > 0 ? "Resume AI edit" : "Edit transcript with AI"}
+          {retryAvailable
+            ? resumeFromChunk > 0
+              ? "Resume AI edit"
+              : "Retry AI edit"
+            : "Edit transcript with AI"}
         </button>
         {jobRunning && (
           <button type="button" onClick={() => jobControllerRef.current?.abort()}>

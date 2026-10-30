@@ -41,7 +41,12 @@ export function ProposalReview({
   );
 
   const accept = async (selected: PendingTranscriptProposal[]) => {
-    const eligible = selected.filter((proposal) => proposal.validation.safe && !isStale(proposal));
+    const eligible = selected.filter(
+      (proposal) =>
+        proposal.validation.structurallyValid === true &&
+        proposal.validation.safe &&
+        !isStale(proposal)
+    );
     if (!canEdit || eligible.length === 0) return;
     const speakerAssignmentCount = eligible.reduce(
       (count, proposal) =>
@@ -70,7 +75,13 @@ export function ProposalReview({
   };
 
   const acceptAfterManualReview = async (proposal: PendingTranscriptProposal) => {
-    if (!canEdit || isStale(proposal) || proposal.validation.safe) return;
+    if (
+      !canEdit ||
+      isStale(proposal) ||
+      proposal.validation.structurallyValid !== true ||
+      proposal.validation.safe
+    )
+      return;
     const confirm = typeof window !== "undefined" ? window.confirm : undefined;
     if (
       !confirm?.(
@@ -110,7 +121,12 @@ export function ProposalReview({
             type="button"
             disabled={
               !canEdit ||
-              !proposals.some((proposal) => proposal.validation.safe && !isStale(proposal))
+              !proposals.some(
+                (proposal) =>
+                  proposal.validation.structurallyValid === true &&
+                  proposal.validation.safe &&
+                  !isStale(proposal)
+              )
             }
             onClick={() => void accept(proposals)}
           >
@@ -174,7 +190,7 @@ export function ProposalReview({
             })}
             {canEdit && (
               <div className="mt-2 flex flex-wrap gap-2">
-                {stale ? (
+                {stale && proposal.validation.structurallyValid ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -188,6 +204,11 @@ export function ProposalReview({
                   >
                     Review changes
                   </button>
+                ) : !proposal.validation.structurallyValid ? (
+                  <p role="alert">
+                    This proposal is structurally invalid and cannot be accepted. Retry the AI edit
+                    before reviewing its changes.
+                  </p>
                 ) : !proposal.validation.safe ? (
                   <button
                     type="button"

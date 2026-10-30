@@ -4,7 +4,11 @@ import {
   type ProposalValidation,
   type ProposedChunk,
 } from "../domain/validateProposal";
-import { planTranscriptChunks, type TranscriptChunk } from "./chunkPlanner";
+import {
+  DEFAULT_TRANSCRIPT_INPUT_TOKENS,
+  planTranscriptChunks,
+  type TranscriptChunk,
+} from "./chunkPlanner";
 import type { SourceSegment } from "../domain/types";
 
 export type TranscriptEditEvent =
@@ -285,7 +289,10 @@ export async function* startTranscriptEditJob(
     const selected = input.selectedIds?.length
       ? segments.filter((segment) => input.selectedIds!.includes(segment.id))
       : segments;
-    chunks = planTranscriptChunks(selected, runtime.maxInputTokens ?? 6000);
+    chunks = planTranscriptChunks(
+      selected,
+      runtime.maxInputTokens ?? DEFAULT_TRANSCRIPT_INPUT_TOKENS
+    );
     const sourceById = new Map(selected.map((segment) => [segment.id, segment]));
     const sourcePartCandidates = new Map<string, Map<number, string>>();
     const firstChunkBySourceId = new Map<string, number>();
@@ -434,6 +441,17 @@ export async function* startTranscriptEditJob(
           }
           candidate = { segments: recovered };
         }
+        const completeValidation = validateTranscriptProposal(chunk, candidate);
+        if (!completeValidation.structurallyValid) {
+          yield {
+            type: "failed",
+            message:
+              "The AI response was structurally incomplete or invalid. This chunk was not proposed; retry from this chunk.",
+            chunkIndex: index,
+            resumeFromChunk: index,
+          };
+          return;
+        }
         const owned = chunk.segments.filter((segment) => !segment.contextOnly);
         const splitSegments = owned.filter(
           (segment) => segment.partCount && segment.parentSegmentId
@@ -453,6 +471,16 @@ export async function* startTranscriptEditJob(
           };
           const normalCandidate = { segments: normalCandidates, truncated: candidate.truncated };
           const validation = validateTranscriptProposal(normalChunk, normalCandidate);
+          if (!validation.structurallyValid) {
+            yield {
+              type: "failed",
+              message:
+                "The AI response was structurally incomplete or invalid. This chunk was not proposed; retry from this chunk.",
+              chunkIndex: index,
+              resumeFromChunk: index,
+            };
+            return;
+          }
           if (!validation.safe) {
             for (const message of validation.warnings)
               yield { type: "warning", message, chunkIndex: index };
@@ -542,6 +570,16 @@ export async function* startTranscriptEditJob(
             };
             const proposal = { segments: [{ id: parent, text }] };
             const validation = validateTranscriptProposal(proposalChunk, proposal);
+            if (!validation.structurallyValid) {
+              yield {
+                type: "failed",
+                message:
+                  "The AI response was structurally incomplete or invalid. This chunk was not proposed; retry from this chunk.",
+                chunkIndex: index,
+                resumeFromChunk: firstChunkBySourceId.get(parent) ?? index,
+              };
+              return;
+            }
             if (!validation.safe) {
               for (const message of validation.warnings)
                 yield { type: "warning", message, chunkIndex: index };

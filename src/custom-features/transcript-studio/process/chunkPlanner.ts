@@ -19,6 +19,8 @@ export interface TranscriptChunk {
   outputTokens: number;
 }
 
+export const DEFAULT_TRANSCRIPT_INPUT_TOKENS = 6000;
+
 const estimateTokens = (text: string): number => Math.max(1, Math.ceil(text.length / 3.5));
 const segmentTokens = (segment: SourceSegment): number => estimateTokens(segment.text) + 12;
 

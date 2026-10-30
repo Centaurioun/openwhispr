@@ -55,6 +55,7 @@ const proposal = (id, segmentId, before, after, baseVersion = 2) => ({
   },
   candidate: { segments: [{ id: segmentId, text: after }] },
   validation: {
+    structurallyValid: true,
     safe: true,
     warnings: [],
     edits: [{ kind: "replaceText", segmentId, before, after }],
@@ -162,6 +163,7 @@ test("speaker suggestions are marked uncertain and require explicit confirmation
   const pending = {
     ...proposal("speaker", "source-0", "Current source", "Current source"),
     validation: {
+      structurallyValid: true,
       safe: true,
       warnings: [],
       edits: [
@@ -202,6 +204,7 @@ test("bulk acceptance confirms every uncertain speaker proposal before any are p
     ...proposal(id, segmentId, "Current source", "Current source"),
     uncertain: true,
     validation: {
+      structurallyValid: true,
       safe: true,
       warnings: [],
       edits: [{ kind: "setSpeaker", segmentId, speakerId: id, speakerName, speakerLocked: true }],
@@ -250,6 +253,7 @@ test("unsafe proposals are excluded from bulk accept and need explicit individua
   const unsafe = {
     ...proposal("unsafe", "source-0", "Current source", "A meaning-changing suggestion"),
     validation: {
+      structurallyValid: true,
       safe: false,
       warnings: ["Possible content omission; review this proposal manually."],
       edits: [
@@ -294,11 +298,53 @@ test("unsafe proposals are excluded from bulk accept and need explicit individua
   assert.deepEqual(accepted[1][0], ["unsafe"]);
 });
 
+test("structurally invalid proposals with partial edits have no acceptance path", async (t) => {
+  const malformed = {
+    ...proposal("malformed", "source-0", "Current source", "Partial suggestion"),
+    validation: {
+      structurallyValid: false,
+      safe: false,
+      warnings: ["One or more source blocks are missing; incomplete output cannot be approved."],
+      edits: [
+        {
+          kind: "replaceText",
+          segmentId: "source-0",
+          before: "Current source",
+          after: "Partial suggestion",
+        },
+      ],
+    },
+  };
+  const safe = proposal("safe", "source-1", "Second source", "Second source.");
+  const accepted = [];
+  const priorConfirm = globalThis.window.confirm;
+  globalThis.window.confirm = () => true;
+  t.after(() => {
+    globalThis.window.confirm = priorConfirm;
+  });
+  const host = await render(t, [malformed, safe], {
+    onAccept: async (...args) => accepted.push(args),
+  });
+
+  assert.equal(
+    host.querySelector('[aria-label="Accept proposal malformed after manual review"]'),
+    null,
+    "structural invalidity must not expose the semantic manual-review action"
+  );
+  await React.act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((button) => button.textContent === "Accept all")
+      .click()
+  );
+  assert.deepEqual(accepted, [[["safe"], safe.validation.edits]]);
+});
+
 test("bulk confirmation counts every locked speaker operation inside one proposal", async (t) => {
   const multiSpeaker = {
     ...proposal("multi-speaker", "source-0", "Current source", "Current source"),
     uncertain: true,
     validation: {
+      structurallyValid: true,
       safe: true,
       warnings: [],
       edits: [
@@ -347,6 +393,7 @@ test("uncertain-only speaker proposals require confirmation individually and in 
     ...proposal("uncertain-only", "source-0", "Current source", "Current source"),
     uncertain: true,
     validation: {
+      structurallyValid: true,
       safe: true,
       warnings: [],
       edits: [
@@ -432,6 +479,7 @@ test("pending proposals stay visible during the next chunk and failed approval r
       },
       candidate: { segments: [{ id: normalized.segments[0].id, text: "Proposed text" }] },
       validation: {
+        structurallyValid: true,
         safe: true,
         warnings: [],
         edits: [

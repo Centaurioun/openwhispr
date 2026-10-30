@@ -7,6 +7,7 @@ export interface ProposedChunk {
 }
 
 export interface ProposalValidation {
+  structurallyValid: boolean;
   safe: boolean;
   warnings: string[];
   edits: EditOperation[];
@@ -115,8 +116,11 @@ export function validateTranscriptProposal(
     (candidate.truncated !== undefined && typeof candidate.truncated !== "boolean")
   ) {
     return {
+      structurallyValid: false,
       safe: false,
-      warnings: ["The model returned an invalid proposal structure; review the response manually."],
+      warnings: [
+        "The model returned an invalid proposal structure. This response cannot be accepted; retry the AI edit.",
+      ],
       edits,
     };
   }
@@ -125,10 +129,12 @@ export function validateTranscriptProposal(
   const proposed = Array.isArray(candidate?.segments) ? candidate.segments : [];
   const seen = new Set<string>();
   let expectedIndex = 0;
+  let structurallyValid = true;
   let safe = true;
 
   if (candidate?.truncated) {
-    warnings.push("The model reported truncated output; this chunk needs manual review.");
+    warnings.push("The model reported truncated output; this chunk cannot be accepted.");
+    structurallyValid = false;
     safe = false;
   }
   for (const entry of proposed) {
@@ -143,21 +149,25 @@ export function validateTranscriptProposal(
       !entry.text.trim()
     ) {
       warnings.push("The model returned an invalid source block.");
+      structurallyValid = false;
       safe = false;
       continue;
     }
     if (!expectedById.has(entry.id)) {
-      warnings.push(`Unexpected or duplicated source block: ${entry.id}.`);
+      warnings.push(`Unexpected source block: ${entry.id}. This response cannot be accepted.`);
+      structurallyValid = false;
       safe = false;
       continue;
     }
     if (seen.has(entry.id)) {
-      warnings.push(`Duplicated source block: ${entry.id}.`);
+      warnings.push(`Duplicated source block: ${entry.id}. This response cannot be accepted.`);
+      structurallyValid = false;
       safe = false;
       continue;
     }
     if (expected[expectedIndex]?.id !== entry.id) {
-      warnings.push("Source blocks were reordered; review this proposal manually.");
+      warnings.push("Source blocks were reordered; this response cannot be accepted.");
+      structurallyValid = false;
       safe = false;
     }
     expectedIndex += 1;
@@ -225,12 +235,19 @@ export function validateTranscriptProposal(
     }
   }
   if (seen.size !== expected.length) {
-    warnings.push("One or more source blocks are missing; incomplete output cannot be approved.");
+    warnings.push("One or more source blocks are missing; incomplete output cannot be accepted.");
+    structurallyValid = false;
     safe = false;
   }
   if (proposed.length === 0 && expected.length) {
     warnings.push("The model returned no source blocks.");
+    structurallyValid = false;
     safe = false;
   }
-  return { safe, warnings, edits };
+  return {
+    structurallyValid,
+    safe: structurallyValid && safe,
+    warnings,
+    edits: structurallyValid ? edits : [],
+  };
 }

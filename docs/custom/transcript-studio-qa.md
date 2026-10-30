@@ -49,7 +49,19 @@ for the command through Swiftly. It does not change Swiftly's global default or
 Xcode selection. Use this when the `swiftc` at the front of `PATH` is not
 compatible with the selected Xcode SDK.
 
-Record each command's exit status, test totals, skipped/todo tests, and any native toolchain error. The native macOS audio snapshot test may require a compatible Swift/Xcode SDK; classify a reproducible local SDK mismatch separately from product failures. Hosted GitHub CI is `PENDING_QUOTA_RESET` while the documented Actions quota remains exhausted.
+Record each command's exit status, test totals, skipped/todo tests, and any native toolchain error. The native macOS audio snapshot test may require a compatible Swift/Xcode SDK; classify a reproducible local SDK mismatch separately from product failures.
+
+GitHub Actions are enabled. The prior `PENDING_QUOTA_RESET` status is obsolete. On 2026-10-30, commit `2285ed3294ac12eed65d2397ff68d64a67c214fe` passed the [Build and Notarize quality workflow](https://github.com/Centaurioun/openwhispr/actions/runs/40978703714) (10,372 tests: 10,317 passed, 0 failed, 54 skipped, 1 todo), [Lockfile Lint](https://github.com/Centaurioun/openwhispr/actions/runs/40978703729), and [Mobile CI](https://github.com/Centaurioun/openwhispr/actions/runs/40978703686). Windows, Linux, and macOS build jobs and the Mobile platform-specific matrix jobs were skipped by change routing; those platforms are not verified by these runs. These results apply to the listed commit only. Check the PR's new workflow runs after publishing later changes; do not describe skipped platform checks as passes.
+
+## Latest hardening and desktop QA status (2026-10-30)
+
+AI proposals are now separated into structural validity and semantic uncertainty. A proposal must cover the complete canonical source chunk in order before it can be accepted or manually reviewed. Unsafe but structurally complete edits may be reviewed individually; structural failures contain no applicable edits. Cached drafts are revalidated against a fresh full-source chunk plan. Renderer `localStorage` scope metadata is not trusted as an authority: when a persisted proposal covers only a selected subset and there is no independently stored main/SQLite scope intent, it is discarded with a recovery warning and must be regenerated. Full-source and oversized synthetic parent proposals retain recovery coverage.
+
+Current candidate local verification (Node v24.22.1, Swiftly Swift 6.4.1): `REQUIRE_DB_TESTS=1 npm run test:swift641` passed with **10,398 tests: 10,383 passed, 0 failed, 14 skipped, 1 todo**. The targeted cached-proposal UI regressions passed **8/8**. Typecheck, lint, format, i18n, renderer build, changed-diff secret scan, and `git diff --check` exited 0. Lint reported 11 warnings; the build reported existing ineffective dynamic-import and large-chunk warnings. These are local results and do not certify desktop behavior.
+
+The isolated Electron UI could not be launched in this environment: the packaged native SQLite module ABI did not match the Electron runtime, and the test runner denied Electron renderer sandbox initialization. **Desktop UI status: `NOT_TESTED`**; DOM tests do not substitute for the manual flows above. CI for a newly pushed candidate must be recorded from its actual workflow runs before any CI pass is claimed.
+
+For macOS QA, setting `HOME` alone does not redirect Electron's `app.getPath("appData")`. Explicitly redirect and verify Electron `appData`/`userData` to a disposable temporary root before opening the application. Verify the application reports the temporary user-data path and that its `.env` contains no credentials. Never inspect or use the normal profile as a fallback. A failed launch is not permission to rebuild shared native dependencies, disable the sandbox, or use a real user profile.
 
 ## Manual accessibility and behavior checks
 

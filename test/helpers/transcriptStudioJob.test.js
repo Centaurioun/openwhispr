@@ -165,6 +165,29 @@ test("invalid output retries with a smaller output budget before proposing", asy
   assert.ok(budgets[1] < budgets[0]);
 });
 
+test("structurally incomplete model output fails closed and can resume from that chunk", async () => {
+  const result = await events(
+    startTranscriptEditJob(
+      input(
+        mockRuntime({
+          processChunk: async () =>
+            JSON.stringify({ segments: [{ id: "a", text: "Ada spoke clearly." }] }),
+        })
+      )
+    )
+  );
+
+  assert.equal(
+    result.some((event) => event.type === "chunkProposed"),
+    false
+  );
+  const failure = result.find((event) => event.type === "failed");
+  assert.ok(failure);
+  assert.equal(failure.chunkIndex, 0);
+  assert.equal(failure.resumeFromChunk, 0);
+  assert.match(failure.message, /incomplete|structural|source block/i);
+});
+
 test("the next chunk waits until the caller drains proposal and progress events", async () => {
   let calls = 0;
   const runtime = mockRuntime({
