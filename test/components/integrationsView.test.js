@@ -128,6 +128,7 @@ async function renderView(
     gcalAccounts = [],
     connectorAccess = { isPaid, blockedByOrg: false, connectorsAllowed: true },
     skillsProps = {},
+    localMcpAddCommand = null,
   } = {}
 ) {
   let root = null;
@@ -139,6 +140,7 @@ async function renderView(
     window: {
       electronAPI: {
         getPlatform: () => "darwin",
+        getLocalMcpAddCommand: async () => localMcpAddCommand,
         openExternal(url) {
           openedUrls.push(url);
         },
@@ -417,17 +419,21 @@ test("a free plan sees plan badges, the API upsell, and no key list", async (t) 
 });
 
 test("a free plan sees Local MCP without a Pro gate while Hosted MCP stays gated", async (t) => {
-  const { container, upgrades } = await renderView(t, { isPaid: false, section: "mcp" });
+  const serverPath =
+    "/Applications/Open Whispr QA.app/Contents/Resources/local-mcp/dist/server.js";
+  const { container, upgrades } = await renderView(t, {
+    isPaid: false,
+    section: "mcp",
+    localMcpAddCommand: `codex mcp add openwhispr-local -- node '${serverPath}'`,
+  });
 
   assert.match(container.textContent, /integrations\.mcp\.local\.title/);
   assert.match(container.textContent, /integrations\.mcp\.local\.freeBadge/);
   assert.match(container.textContent, /integrations\.mcp\.local\.description/);
   assert.match(container.textContent, /integrations\.mcp\.local\.setup/);
   assert.match(container.textContent, /npm install -g @openwhispr\/cli@0\.3\.0/);
-  assert.match(
-    container.textContent,
-    /codex mcp add openwhispr-local -- node "\$PWD\/tools\/local-mcp\/dist\/server\.js"/
-  );
+  assert.match(container.textContent, /integrations\.mcp\.local\.prerequisites/);
+  assert.ok(container.textContent.includes(`codex mcp add openwhispr-local -- node '${serverPath}'`));
   assert.match(container.textContent, /integrations\.mcp\.hosted\.title/);
   assert.match(container.textContent, /integrations\.mcp\.proRequired/);
   assert.doesNotMatch(container.textContent, /integrations\.mcp\.local\.proRequired/);

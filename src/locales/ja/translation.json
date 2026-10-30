@@ -4213,14 +4213,16 @@
         "freeBadge": "無料",
         "description": "このコンピューターで MCP サーバーを実行し、OpenWhispr デスクトップアプリに接続します。ローカルのメモや文字起こしを読むには OpenWhispr を起動しておく必要があります。",
         "privacy": "ローカル MCP に Pro、OpenWhispr のホスト型 MCP 契約、OpenAI API キーは不要です。MCP クライアントは読み取ったテキストを、そのクライアントの AI プロバイダーへ送信する場合があります。",
-        "setup": "OpenWhispr のソースフォルダーから設定",
-        "buildCommandLabel": "固定バージョンの OpenWhispr CLI をインストールし、ローカル MCP サーバーをビルド",
+        "setup": "インストール済みアプリから設定",
+        "buildCommandLabel": "OpenWhispr CLI をインストール（Node.js 24+ が必要）",
         "addToCodexLabel": "Codex に登録",
         "copyCommand": "コマンドをコピー",
         "statusLabel": "設定の確認",
         "statusDescription": "保存済みの Codex 登録を確認します。接続を確認するには、Codex にローカルのメモを一覧表示または検索するよう依頼してください。",
         "verifyCommandLabel": "保存済みサーバー登録を確認",
-        "setupGuideLabel": "ローカル MCP の設定ガイドを読む"
+        "setupGuideLabel": "ローカル MCP の設定ガイドを読む",
+        "prerequisites": "Node.js 24+、OpenWhispr CLI、Codex CLI が必要です。",
+        "commandUnavailable": "このアプリでは同梱の Local MCP サーバーを利用できません。OpenWhispr を再インストールまたは更新してください。"
       },
       "hosted": {
         "title": "ホスト型 MCP",

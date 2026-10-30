@@ -13,16 +13,13 @@ The MCP process invokes the CLI with `--local` for every read. If the desktop br
 
 ## Install and register
 
-Run these commands from the OpenWhispr source folder. The first command installs the CLI so its `openwhispr` executable is available to Codex; the next commands install and build the self-contained MCP adapter.
+The packaged desktop app includes the compiled Local MCP server and its production dependencies. No repository clone or TypeScript build is needed. In OpenWhispr, open **Settings → Integrations → Local MCP — Free**, run the CLI install command, then copy and run the Codex registration command shown by that screen. The app derives the server path from its own installed bundle location, including paths with spaces; it does not assume `/Applications`.
 
 ```sh
 npm install -g @openwhispr/cli@0.3.0
-npm --prefix tools/local-mcp ci
-npm --prefix tools/local-mcp run build
-codex mcp add openwhispr-local -- node "$PWD/tools/local-mcp/dist/server.js"
 ```
 
-The final command saves a stdio server entry in the Codex configuration for the current user. It uses the repository path from the current shell. To inspect the saved entry later:
+The registration command is generated from the running app's resource path and saves a stdio server entry in the Codex configuration for the current user. Re-copy and run it after moving OpenWhispr to a different path. This setup does not edit Codex configuration until you run the command. To inspect the saved entry later:
 
 ```sh
 codex mcp get openwhispr-local
@@ -30,7 +27,7 @@ codex mcp get openwhispr-local
 
 That command confirms only that the entry is saved. To verify live access, open a new Codex session and ask it to list or search local notes. Do not label the server connected until the client has completed an MCP handshake and a note read succeeds.
 
-The global CLI install above is an explicit user-run setup step. Tests and isolated smoke runs for this change use a temporary npm prefix and never modify the user's global npm or Codex configuration.
+The global CLI install above is an explicit user-run prerequisite. The app does not install global npm packages or edit Codex configuration. Tests and isolated smoke runs use a temporary npm prefix and temporary Codex home.
 
 ## Available tools
 

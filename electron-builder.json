@@ -150,6 +150,16 @@
     {
       "from": "resources/mediaremote-adapter/LICENSE",
       "to": "bin/mediaremote-adapter.LICENSE"
+    },
+    {
+      "from": "tools/local-mcp",
+      "to": "local-mcp",
+      "filter": [
+        "dist/**/*",
+        "package.json",
+        "node_modules/**/*",
+        "!node_modules/.bin/**"
+      ]
     }
   ],
   "mac": {

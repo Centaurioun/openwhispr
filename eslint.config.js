@@ -5,6 +5,7 @@ module.exports = [
   {
     ignores: [
       "dist/**",
+      "dist-codexqa/**",
       "tools/local-mcp/dist/**",
       "node_modules/**",
       "src/dist/**",

@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -12,10 +12,7 @@ import cursorIcon from "../../assets/icons/providers/cursor.svg";
 
 const MCP_URL = "https://mcp.openwhispr.com/mcp";
 const MCP_DOCS_URL = "https://docs.openwhispr.com/integrations/mcp";
-const LOCAL_BUILD_COMMAND =
-  "npm install -g @openwhispr/cli@0.3.0 && npm --prefix tools/local-mcp install && npm --prefix tools/local-mcp run build";
-const LOCAL_ADD_COMMAND =
-  'codex mcp add openwhispr-local -- node "$PWD/tools/local-mcp/dist/server.js"';
+const LOCAL_REQUIREMENTS_COMMAND = "npm install -g @openwhispr/cli@0.3.0";
 const LOCAL_STATUS_COMMAND = "codex mcp get openwhispr-local";
 const LOCAL_MCP_SETUP_URL =
   "https://github.com/Centaurioun/openwhispr/blob/codex/local-mcp-2026-10-30/docs/custom/local-mcp-setup.md";
@@ -36,6 +33,22 @@ interface McpPaneProps {
 export function McpPane({ title, isPaid, onUpgrade, onCreateKey }: McpPaneProps): ReactElement {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const [localMcpAddCommand, setLocalMcpAddCommand] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI
+      ?.getLocalMcpAddCommand?.()
+      .then((command) => {
+        if (!cancelled) setLocalMcpAddCommand(command);
+      })
+      .catch(() => {
+        if (!cancelled) setLocalMcpAddCommand(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <IntegrationsPane
@@ -59,6 +72,9 @@ export function McpPane({ title, isPaid, onUpgrade, onCreateKey }: McpPaneProps)
           <p className="text-xs text-muted-foreground/80 leading-relaxed">
             {t("integrations.mcp.local.privacy")}
           </p>
+          <p className="text-xs text-muted-foreground/80 leading-relaxed">
+            {t("integrations.mcp.local.prerequisites")}
+          </p>
           <Button
             variant="ghost"
             size="sm"
@@ -72,15 +88,21 @@ export function McpPane({ title, isPaid, onUpgrade, onCreateKey }: McpPaneProps)
               {t("integrations.mcp.local.setup")}
             </p>
             <CopyableCommand
-              command={LOCAL_BUILD_COMMAND}
+              command={LOCAL_REQUIREMENTS_COMMAND}
               label={t("integrations.mcp.local.buildCommandLabel")}
             />
             <div className="mt-3">
-              <CopyableCommand
-                command={LOCAL_ADD_COMMAND}
-                label={t("integrations.mcp.local.addToCodexLabel")}
-                copyLabel={t("integrations.mcp.local.copyCommand")}
-              />
+              {localMcpAddCommand ? (
+                <CopyableCommand
+                  command={localMcpAddCommand}
+                  label={t("integrations.mcp.local.addToCodexLabel")}
+                  copyLabel={t("integrations.mcp.local.copyCommand")}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {t("integrations.mcp.local.commandUnavailable")}
+                </p>
+              )}
             </div>
           </div>
           <div className="border-t border-border pt-3">

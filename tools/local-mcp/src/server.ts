@@ -1,6 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createLocalCommands, localCommands, type LocalCliInvoker, type LocalNote } from "./commands.js";
 import { CliAdapterError, invokeLocalCli } from "./cliAdapter.js";
@@ -163,7 +164,16 @@ function noteForMcp(note: LocalNote): Omit<LocalNote, "transcript" | "transcript
   return safeNote;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isMainEntry(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainEntry()) {
   runStdioServer().catch(() => {
     // Keep stdout exclusively for JSON-RPC stdio; do not log note data or CLI details.
     process.stderr.write("OpenWhispr Local MCP could not start. Confirm the local app and CLI are available.\n");
