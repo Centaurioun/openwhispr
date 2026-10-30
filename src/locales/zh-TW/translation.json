@@ -4213,14 +4213,16 @@
         "freeBadge": "免費",
         "description": "在這台電腦上執行 MCP 伺服器並連接 OpenWhispr 桌面應用程式。讀取本機筆記和逐字稿時，OpenWhispr 必須保持執行。",
         "privacy": "本機 MCP 不需要 Pro、OpenWhispr 託管 MCP 訂閱或 OpenAI API 金鑰。你的 MCP 用戶端可能會將讀取的文字傳送給該用戶端的 AI 供應商。",
-        "setup": "從 OpenWhispr 原始碼資料夾設定",
-        "buildCommandLabel": "安裝固定版本的 OpenWhispr CLI 並建置本機 MCP 伺服器",
+        "setup": "從已安裝的應用程式設定",
+        "buildCommandLabel": "安裝 OpenWhispr CLI（需要 Node.js 24+）",
         "addToCodexLabel": "在 Codex 中註冊",
         "copyCommand": "複製命令",
         "statusLabel": "設定檢查",
         "statusDescription": "此命令會檢查已儲存的 Codex 設定。若要確認即時連線，請讓 Codex 列出或搜尋本機筆記。",
         "verifyCommandLabel": "檢查已儲存的伺服器設定",
-        "setupGuideLabel": "閱讀本機 MCP 設定指南"
+        "setupGuideLabel": "閱讀本機 MCP 設定指南",
+        "prerequisites": "需要 Node.js 24+、OpenWhispr CLI 和 Codex CLI。",
+        "commandUnavailable": "此應用程式中沒有可用的 Local MCP 內建伺服器。請重新安裝或更新 OpenWhispr。"
       },
       "hosted": {
         "title": "託管 MCP",

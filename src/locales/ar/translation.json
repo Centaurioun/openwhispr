@@ -748,14 +748,16 @@
         "freeBadge": "مجاني",
         "description": "شغّل خادم MCP على هذا الكمبيوتر وصِله بتطبيق OpenWhispr المكتبي. يجب أن يكون OpenWhispr قيد التشغيل لقراءة ملاحظاتك ونصوصك المحلية.",
         "privacy": "لا يتطلب MCP المحلي اشتراك Pro أو اشتراكًا في خدمة OpenWhispr MCP المستضافة أو مفتاح OpenAI API. قد يرسل عميل MCP النص الذي يقرؤه إلى مزود الذكاء الاصطناعي الخاص به.",
-        "setup": "الإعداد من مجلد مصدر OpenWhispr",
-        "buildCommandLabel": "تثبيت CLI الخاص بـ OpenWhispr بالإصدار المحدد وإنشاء خادم MCP المحلي",
+        "setup": "الإعداد من التطبيق المثبّت",
+        "buildCommandLabel": "تثبيت واجهة OpenWhispr (يتطلب Node.js 24+)",
         "addToCodexLabel": "تسجيله في Codex",
         "copyCommand": "نسخ الأمر",
         "statusLabel": "التحقق من الإعداد",
         "statusDescription": "يتحقق هذا من إدخال Codex المحفوظ. للتحقق من اتصال مباشر، اطلب من Codex عرض ملاحظاتك المحلية أو البحث فيها.",
         "verifyCommandLabel": "التحقق من إدخال الخادم المحفوظ",
-        "setupGuideLabel": "قراءة دليل إعداد MCP المحلي"
+        "setupGuideLabel": "قراءة دليل إعداد MCP المحلي",
+        "prerequisites": "يتطلب Node.js 24+ وواجهة OpenWhispr وواجهة Codex.",
+        "commandUnavailable": "خادم Local MCP المضمّن غير متاح في هذا التطبيق. أعد تثبيت OpenWhispr أو حدّثه."
       },
       "hosted": {
         "title": "MCP المستضاف",

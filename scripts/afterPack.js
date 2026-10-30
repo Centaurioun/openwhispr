@@ -22,6 +22,7 @@ const {
   WINDOWS_ONNXRUNTIME_PRIVATE_NAME,
   WINDOWS_ONNXRUNTIME_UPSTREAM_NAME,
 } = require("./download-sherpa-onnx");
+const { ensureLocalMcpRuntime } = require("./lib/ensureLocalMcpRuntime");
 
 // ---------------------------------------------------------------------------
 // macOS resource binary signing
@@ -315,6 +316,10 @@ function verifyUnpackedBinaries(context) {
 // ---------------------------------------------------------------------------
 
 exports.default = async function (context) {
+  ensureLocalMcpRuntime({
+    projectDir: context.packager.projectDir,
+    resourcesDir: resolveResourcesDir(context),
+  });
   stripOnnxruntimeBinaries(context);
   wrapLinuxBinary(context);
   verifyMeetingAecHelper(context);

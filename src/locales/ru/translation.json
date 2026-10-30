@@ -4291,14 +4291,16 @@
         "freeBadge": "Бесплатно",
         "description": "Запустите MCP-сервер на этом компьютере и подключите его к приложению OpenWhispr. Для чтения локальных заметок и расшифровок OpenWhispr должен работать.",
         "privacy": "Для Local MCP не нужны Pro, подписка на Hosted MCP от OpenWhispr или ключ API OpenAI. Ваш MCP-клиент может отправлять прочитанный текст своему поставщику ИИ.",
-        "setup": "Настройка из папки исходного кода OpenWhispr",
-        "buildCommandLabel": "Установить закреплённую версию CLI OpenWhispr и собрать локальный MCP-сервер",
+        "setup": "Настроить из установленного приложения",
+        "buildCommandLabel": "Установить CLI OpenWhispr (требуется Node.js 24+)",
         "addToCodexLabel": "Зарегистрировать в Codex",
         "copyCommand": "Скопировать команду",
         "statusLabel": "Проверка конфигурации",
         "statusDescription": "Проверяет сохранённую запись Codex. Чтобы проверить активное соединение, попросите Codex перечислить или найти локальные заметки.",
         "verifyCommandLabel": "Проверить сохранённую запись сервера",
-        "setupGuideLabel": "Открыть руководство по настройке Local MCP"
+        "setupGuideLabel": "Открыть руководство по настройке Local MCP",
+        "prerequisites": "Требуются Node.js 24+, CLI OpenWhispr и CLI Codex.",
+        "commandUnavailable": "Встроенный сервер Local MCP недоступен в этом приложении. Переустановите или обновите OpenWhispr."
       },
       "hosted": {
         "title": "Размещённый MCP",

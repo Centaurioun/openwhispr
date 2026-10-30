@@ -4231,14 +4231,16 @@
         "freeBadge": "Gratis",
         "description": "Esegui il server MCP su questo computer e collegalo all’app desktop OpenWhispr. OpenWhispr deve essere in esecuzione per leggere note e trascrizioni locali.",
         "privacy": "MCP locale non richiede Pro, un abbonamento al MCP ospitato di OpenWhispr o una chiave API OpenAI. Il client MCP può inviare il testo letto al provider IA del client.",
-        "setup": "Configurazione dalla cartella sorgente di OpenWhispr",
-        "buildCommandLabel": "Installa la versione bloccata della CLI OpenWhispr e compila il server MCP locale",
+        "setup": "Configura dall’app installata",
+        "buildCommandLabel": "Installa la CLI OpenWhispr (richiede Node.js 24+)",
         "addToCodexLabel": "Registralo in Codex",
         "copyCommand": "Copia comando",
         "statusLabel": "Verifica della configurazione",
         "statusDescription": "Controlla la voce Codex salvata. Per verificare una connessione attiva, chiedi a Codex di elencare o cercare le note locali.",
         "verifyCommandLabel": "Verifica la voce del server salvata",
-        "setupGuideLabel": "Leggi la guida di configurazione di MCP locale"
+        "setupGuideLabel": "Leggi la guida di configurazione di MCP locale",
+        "prerequisites": "Richiede Node.js 24+, la CLI OpenWhispr e la CLI Codex.",
+        "commandUnavailable": "Il server Local MCP incluso non è disponibile in questa app. Reinstalla o aggiorna OpenWhispr."
       },
       "hosted": {
         "title": "MCP ospitato",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -23,6 +23,10 @@ test("MCP server completes real stdio handshake, discovery, notes and transcript
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "openwhispr-mcp-stdio-"));
   const binDir = path.join(tempRoot, "bin");
   await mkdir(binDir, { recursive: true });
+  const packageDir = path.join(tempRoot, "Packaged Local MCP");
+  await mkdir(packageDir, { recursive: true });
+  const entryPoint = path.join(packageDir, "server with spaces.ts");
+  await symlink(path.resolve("src/server.ts"), entryPoint);
   const fakeCli = path.join(binDir, "openwhispr");
   const fakeCliSource = `#!/usr/bin/env node
 const args = process.argv.slice(2);
@@ -39,7 +43,7 @@ else process.exit(24);
 
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ["--import", "tsx", path.resolve("src/server.ts")],
+    args: ["--import", "tsx", entryPoint],
     cwd: process.cwd(),
     env: {
       ...process.env,

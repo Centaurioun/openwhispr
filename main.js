@@ -4,6 +4,7 @@ const { XWAYLAND_FLAG, shouldForceXWayland } = require("./src/helpers/xwayland")
 const { createHotkeyRepeatGate } = require("./src/helpers/hotkeyRepeatGate");
 const { shouldDisableGpuCompositing } = require("./src/helpers/linuxGpuCompositing");
 const { configureUserDataPath } = require("./src/helpers/userDataPath");
+const { createCodexAddCommand, getLocalMcpServerPath } = require("./src/helpers/localMcpDistribution");
 const {
   configureQaCaptureDenial,
   isQaCaptureDenialActive,
@@ -31,6 +32,7 @@ const {
   systemPreferences,
 } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const http = require("http");
 const tls = require("tls");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -58,6 +60,16 @@ const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
 };
 const BASE_WINDOWS_APP_ID = "com.gizmolabs.openwhispr";
 const DEFAULT_AUTH_BRIDGE_PORT = 5199;
+
+ipcMain.handle("get-local-mcp-add-command", () => {
+  const serverPath = getLocalMcpServerPath({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+  });
+  if (!fs.existsSync(serverPath)) return null;
+  return createCodexAddCommand(serverPath);
+});
 
 function isElectronBinaryExec() {
   const execPath = (process.execPath || "").toLowerCase();
