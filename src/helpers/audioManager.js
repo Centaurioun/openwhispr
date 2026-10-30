@@ -23,7 +23,7 @@ import {
 } from "./localSpeechGate";
 import { reacquireIfDead } from "./micTrackHealth";
 import { isMicWarm, WARMUP_ACQUIRE_TIMEOUT_MS } from "./micWarmState";
-import { assertCaptureAllowed } from "./qaCapturePolicy";
+import { assertCaptureAllowed } from "./qaCapturePolicy.mjs";
 import {
   PreparedMicCapture,
   disposePreparedCapture,

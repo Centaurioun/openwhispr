@@ -49,6 +49,29 @@ test("QA capture denial is opt-in and only accepted for an unpackaged developmen
   assert.equal(isQaCaptureDenialRequested({}, true, QA_CHANNEL, QA_BUNDLE_ID), false);
 });
 
+test("the ESM audio manager guard is inert by default and fails closed in capture-denied QA", async () => {
+  const { assertCaptureAllowed } = await import("../../src/helpers/qaCapturePolicy.mjs");
+  const requested = process.env.OPENWHISPR_QA_DENY_CAPTURE;
+  const active = process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+  try {
+    delete process.env.OPENWHISPR_QA_DENY_CAPTURE;
+    delete process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+    assert.doesNotThrow(() => assertCaptureAllowed());
+
+    process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE = "1";
+    assert.throws(() => assertCaptureAllowed(), { code: "QA_CAPTURE_DENIED" });
+    delete process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+
+    process.env.OPENWHISPR_QA_DENY_CAPTURE = "1";
+    assert.throws(() => assertCaptureAllowed(), { code: "QA_CAPTURE_DENIED" });
+  } finally {
+    if (requested === undefined) delete process.env.OPENWHISPR_QA_DENY_CAPTURE;
+    else process.env.OPENWHISPR_QA_DENY_CAPTURE = requested;
+    if (active === undefined) delete process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE;
+    else process.env.OPENWHISPR_QA_CAPTURE_DENIED_ACTIVE = active;
+  }
+});
+
 test("packaged QA identity is read only from its macOS app bundle Info.plist", () => {
   const fs = require("fs");
   const os = require("os");
